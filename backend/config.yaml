@@ -1,0 +1,216 @@
+# 足球量化分析模型配置 v5.0
+
+# 预测与竞彩开售状态无关；require_nspf_odds 仅作遗留开关（默认关闭）
+prediction:
+  require_nspf_odds: false
+
+# 泊松模型
+poisson:
+  max_goals: 10
+  home_advantage: 1.15
+  league_avg_goals:
+    EPL: 2.85
+    LALIGA: 2.50
+    BUNDES: 3.10
+    SERIEA: 2.60
+    LIGUE1: 2.70
+    UCL: 2.80
+    ECH: 2.55
+    WC: 2.65
+    EC: 2.50
+    CA: 2.55
+    AFC: 2.60
+    ACN: 2.40
+
+# ELO评级
+elo:
+  k_factor: 32
+  home_advantage: 100
+  initial_rating: 1500
+
+# 蒙特卡洛
+monte_carlo:
+  simulations: 10000
+  parallel_workers: 4
+
+# 期望进球 xG（基于射门/射正）
+xg:
+  home_advantage: 1.08
+  prior_xg_per_shot: 0.11
+  prior_xg_per_sot: 0.31
+  shrink_k: 4.0
+  min_matches: 2
+
+# 模型融合权重（四者归一化）
+ensemble:
+  weights:
+    elo: 0.30
+    poisson: 0.30
+    xg: 0.22
+    monte_carlo: 0.18
+  # 限制 MC 上限，减轻与泊松共线（MC 由泊松 λ 采样）
+  max_monte_carlo_weight: 0.28
+  min_monte_carlo_weight: 0.05
+  # 单联赛完赛样本 ≥ 此值时独立搜权重/超参；低于 soft_league_samples 直接回退全局
+  min_league_samples: 40
+  # 介于 soft 与 min 之间：仍网格搜索，但结果按 n/min 向全局混合（league_blended）
+  soft_league_samples: 20
+  # 权重更新指数平滑：w = α·new + (1-α)·prev，α = clamp(n/(n+prior_strength))
+  # 小样本联赛 α 更小，降低网格搜索抖动
+  weight_smoothing:
+    enabled: true
+    prior_strength: 40
+    min_alpha: 0.20
+    max_alpha: 0.85
+  # 训练样本时间衰减（融合选参 / 泊松·xG 加权；ELO 仍时序更新）
+  time_decay:
+    enabled: true
+    half_life_days: 180
+  # 评测：网格搜索主指标 + walk-forward 折数
+  evaluation:
+    primary_metric: brier   # brier | accuracy | log_loss
+    walk_forward_folds: 3
+    calibration_bins: 5
+  # 分联赛超参搜索网格（主场优势、ELO K）
+  hyperparams:
+    elo_k_options: [20, 24, 28, 32, 36, 40]
+    elo_home_advantage_options: [50, 75, 100, 125, 150]
+    poisson_home_advantage_options: [1.05, 1.10, 1.15, 1.20, 1.25]
+  # 分析场景：见 DOC/预测分析场景规则.md
+  analysis_scenarios:
+    enabled: true
+    apply_primary: true   # true=顶栏结论用自动选中的场景；false=始终整合版
+
+# 竞彩比分 Top3：历史相似盘口比分分布（看盘对照，不参与融合；见 services/jingcai_score_top3.py）
+# 参数用 scripts/tune_score_top3.py 回测网格搜索确定（2026-10 样本仅 ~350 场，先验权重偏大；样本增多后重跑）
+jingcai_score_top3:
+  recommend_count: 3          # 历史相似盘口比分推荐个数（页面可覆盖，默认 3）
+  lookback_days: 540
+  k: 80                       # 同盘口内最近邻样本数
+  bandwidth: 0.15             # 高斯核带宽（隐含概率空间欧氏距离）
+  smoothing_alpha: 80         # 市场泊松先验的伪样本数
+  same_league_boost: 1.3
+  recency_half_life_days: 180
+  min_effective_samples: 25   # 核权重和低于此值则逐级放宽：双玩法 → 单玩法 → 同盘口全部 → 纯先验
+  no_snapshot_weight: 1.0     # 无赛前快照样本的降权系数（赛果页回写的即收盘 SP，默认不降权）
+  bf_prior_weight: 0          # 赛前比分 SP 在先验中的权重。回测 bf_subset 高于同批泊松先验后再调高；0 表示不用
+  model_prior_weight: 0       # 赛前预测 λ 的权重。回测「模型 λ 先验」高于同批不约束后再调高；0 表示不用。不读 5×5 比分矩阵
+  cache_ttl_seconds: 600
+  max_batch: 50
+
+# Token / 会话（可选 Redis；连不上自动回退内存，不阻塞启动）
+redis:
+  enabled: true
+  url: redis://localhost:6379/0
+  token_ttl_seconds: 86400
+  prediction_cache:
+    enabled: true
+    ttl_seconds: 3600
+  job_queue:
+    enabled: true
+    default_timeout: 7200
+    # 排队等待超时：任务入队后等待 worker 接手的最大秒数，超时判 failed 并释放锁
+    # （与 default_timeout「任务最长执行时长」分开；worker 未消费队列时避免锁死 2 小时）
+    queue_wait_timeout: 1200
+  # 训练互斥锁。ttl 由心跳续期；进程死后约 ttl 秒自动释放。
+  # stale_running_seconds：Redis 不可用时，超过该时长仍为 running 的记录在启动时标为失败（默认 3 小时，且不低于队列超时）。
+  training_lock:
+    ttl_seconds: 120
+    stale_running_seconds: 10800
+  # 定时任务执行锁。同一 task_id 同时只跑一份；心跳续期，进程退出后约 ttl 秒释放。
+  task_run_lock:
+    ttl_seconds: 120
+
+# 风控
+risk_control:
+  min_confidence: 0.40
+  max_uncertainty: 0.35
+
+# 采集策略（P1/P2/P3：配额、SLA、重点联赛、队列）
+crawler:
+  priority_leagues: [EPL, LALIGA, BUNDES, SERIEA, LIGUE1, UCL, UEL]
+  # P2：已有 500+ESPN 双源、默认纳入统计/伤病/质量看板（SLA 低于核心）
+  extended_leagues: [MLS, BRA, SWE, FIN]
+  stats_limit_per_league: 150
+  stats_ucl_extra: 80
+  priority_stats_limit: 50
+  extended_stats_limit: 80
+  train_min_stats_delta: 50
+  env_limit: 1000
+  env_finished_share: 0.65
+  sla:
+    enabled: true
+    default_stats_coverage_pct: 99.0
+    by_league:
+      EPL: 99.5
+      LALIGA: 99.5
+      BUNDES: 99.5
+      SERIEA: 99.5
+      LIGUE1: 99.5
+      UCL: 99.5   # 相对可补场次（不含资格赛无源）
+      UEL: 95.0
+      WC: 90.0
+      MLS: 88.0
+      BRA: 88.0
+      SWE: 85.0
+      FIN: 85.0
+      NOR: 85.0
+      K1: 85.0
+    min_limit: 20
+    max_limit: 400
+    budget_per_run: 900
+    priority_budget: 450
+    extended_budget: 200
+  quality_alerts:
+    enabled: true
+    miss_streak: 3
+    miss_rate_threshold: 0.5
+    miss_min_found: 5
+    stale_finished_hours: 24
+    fixture_lookback_hours: 36
+    mapping_gap_wow_ratio: 1.2
+    mapping_gap_min_delta: 10
+    alert_dedup_hours: 48
+
+# 环境修正（天气 / 草坪 → 泊松·xG·蒙特卡洛 λ 系数）
+environment:
+  weather_lambda_factor:
+    晴: 1.00
+    多云: 1.00
+    阴: 0.98
+    小雨: 0.94
+    大雨: 0.88
+    雪: 0.85
+  pitch_lambda_factor:
+    优秀: 1.02
+    良好: 1.00
+    一般: 0.96
+    较差: 0.90
+  # 超出该气温区间时额外下调 λ（并抬升风险）
+  extreme_temp_c: [0, 35]
+
+# 积分榜 / 射手榜 / 球员阵容聚合软先验（交叉校验，权重宜小）
+soft_priors:
+  enabled: true
+  # 积分榜场均积分差 → 攻防微调上限（相对）
+  standings_weight: 0.05
+  # 球队射手进球贡献 → 进攻微调上限
+  scorers_weight: 0.03
+  # players.goals/assists/appearances 阵容指数差 → 攻防微调上限
+  players_weight: 0.03
+  # 伤停人数差（来自 RiskAlert）→ 攻防微调上限
+  injury_weight: 0.02
+  injury_scale: 3.0
+  # 阵容指数差约达该值时触及 players_weight（进球+0.5助攻 / 出场）
+  players_scale: 0.15
+  min_played: 1
+  # 计入阵容聚合的最少出场 / 最少有出场球员数
+  min_player_apps: 1
+  min_squad_players: 5
+
+# 数据库配置（生产环境请用环境变量 DATABASE_URL 覆盖，勿提交真实密码）
+database:
+  # url: sqlite:///e:/fuye/traesolo/backend/data/football.db
+  # MySQL 本地开发示例（密码通过 DATABASE_URL 环境变量注入更安全）:
+  # url: mysql+pymysql://football:Football@2026!x@localhost:3306/football_analytics
+  url: mysql+pymysql://root:123456@localhost:13306/football

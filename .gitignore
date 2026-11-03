@@ -1,0 +1,45 @@
+# ===== 依赖目录 =====
+node_modules/
+backend/venv/
+backend/.venv/
+backend/.pytest_cache/
+
+# ===== 构建产物 =====
+frontend/dist/
+backend/logs/
+*.pyc
+__pycache__/
+
+# ===== 环境文件 =====
+.env
+.env.local
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+
+# ===== 图片 =====
+backend/static/media/**/*.png
+backend/static/media/**/*.jpg
+backend/static/media/**/*.jpeg
+backend/static/media/**/*.webp
+
+# ===== 数据库文件 =====
+*.db
+*.sqlite
+*.sqlite3
+
+# ===== 密钥文件 =====
+*.pem
+*.key
+
+# ===== 工具/IDE 目录 =====
+.trae/
+.cursor/
+.box-agent/
+.box-agent-scratch/

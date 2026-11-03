@@ -1,0 +1,166 @@
+# -*- coding: utf-8 -*-
+import json
+from collections import Counter, defaultdict
+import pymysql
+
+conn = pymysql.connect(
+    host='127.0.0.1', port=13306, user='root', password='123456',
+    database='football', charset='utf8mb4')
+cur = conn.cursor()
+
+cur.execute("SELECT COUNT(*) FROM matches WHERE status='finished' AND home_goals IS NOT NULL AND away_goals IS NOT NULL")
+n_finished = cur.fetchone()[0]
+cur.execute("SELECT COUNT(*) FROM matches WHERE status='finished' AND odds_nspf_win IS NOT NULL AND odds_nspf_draw IS NOT NULL AND odds_nspf_lose IS NOT NULL AND home_goals IS NOT NULL")
+n_nspf = cur.fetchone()[0]
+cur.execute("SELECT COUNT(*) FROM matches WHERE status='finished' AND odds_nspf_win IS NOT NULL AND handicap IS NOT NULL AND home_goals IS NOT NULL")
+n_nspf_hc = cur.fetchone()[0]
+cur.execute("""
+SELECT home_goals, away_goals, handicap,
+       odds_nspf_win, odds_nspf_draw, odds_nspf_lose,
+       odds_spf_win, odds_spf_draw, odds_spf_lose,
+       result, league_id
+FROM matches
+WHERE status='finished'
+  AND odds_nspf_win IS NOT NULL
+  AND odds_nspf_draw IS NOT NULL
+  AND odds_nspf_lose IS NOT NULL
+  AND home_goals IS NOT NULL
+  AND away_goals IS NOT NULL
+""")
+rows = cur.fetchall()
+conn.close()
+
+def implied(w, d, l):
+    rw, rd, rl = 1.0 / float(w), 1.0 / float(d), 1.0 / float(l)
+    s = rw + rd + rl
+    return rw / s, rd / s, rl / s
+
+def nspf_bucket(w, d, l):
+    ph, pd, pa = implied(w, d, l)
+    side_min = min(float(w), float(l))
+    ratio = min(float(w), float(l)) / max(float(w), float(l))
+    if ratio <= 0.55:
+        return 'strong_vs_weak'
+    if side_min >= 1.9:
+        return 'drawish'
+    if ph >= 0.48:
+        return 'home_fav'
+    if pa >= 0.48:
+        return 'away_fav'
+    if abs(ph - pa) < 0.08:
+        return 'balanced'
+    return 'home_lean' if ph > pa else 'away_lean'
+
+def hc_bucket(hc):
+    if hc is None:
+        return 'na'
+    h = int(hc)
+    if h <= -2:
+        return 'hc_le_-2'
+    if h == -1:
+        return 'hc_-1'
+    if h == 0:
+        return 'hc_0'
+    if h == 1:
+        return 'hc_+1'
+    return 'hc_ge_+2'
+
+score_all = Counter()
+by_nspf = defaultdict(Counter)
+by_hc = defaultdict(Counter)
+by_cross = defaultdict(Counter)
+
+for hg, ag, hc, w, d, l, sw, sd, sl, result, lid in rows:
+    sc = '%s-%s' % (int(hg), int(ag))
+    score_all[sc] += 1
+    nb = nspf_bucket(w, d, l)
+    hb = hc_bucket(hc)
+    by_nspf[nb][sc] += 1
+    by_hc[hb][sc] += 1
+    by_cross['%s|%s' % (nb, hb)][sc] += 1
+
+def topn(counter, n=8):
+    total = sum(counter.values())
+    out = []
+    acc = 0.0
+    for k, v in counter.most_common(n):
+        p = v / total if total else 0
+        acc += p
+        out.append({'score': k, 'n': v, 'pct': round(p * 100, 1), 'cum': round(acc * 100, 1)})
+    return {'n': total, 'top': out}
+
+coverage = {}
+items = [('all', score_all)] + list(by_nspf.items()) + list(by_hc.items())
+for name, counter in items:
+    total = sum(counter.values())
+    if total < 20:
+        continue
+    tops = [k for k, _ in counter.most_common(8)]
+    coverage[name] = {
+        'n': total,
+        'top3': round(sum(counter[k] for k in tops[:3]) / total * 100, 1),
+        'top4': round(sum(counter[k] for k in tops[:4]) / total * 100, 1),
+        'top6': round(sum(counter[k] for k in tops[:6]) / total * 100, 1),
+        'scores3': tops[:3],
+        'scores4': tops[:4],
+    }
+
+cross_cov = {}
+for name, counter in by_cross.items():
+    total = sum(counter.values())
+    if total < 25:
+        continue
+    tops = [k for k, _ in counter.most_common(6)]
+    cross_cov[name] = {
+        'n': total,
+        'top3': round(sum(counter[k] for k in tops[:3]) / total * 100, 1),
+        'top4': round(sum(counter[k] for k in tops[:4]) / total * 100, 1),
+        'scores4': tops[:4],
+    }
+
+hc_vs_diff = defaultdict(lambda: Counter())
+for hg, ag, hc, w, d, l, sw, sd, sl, result, lid in rows:
+    if hc is None:
+        continue
+    diff = int(hg) - int(ag)
+    hc_vs_diff[int(hc)]['diff_%s' % diff] += 1
+    adj = diff + int(hc)
+    if adj > 0:
+        hc_vs_diff[int(hc)]['let_H'] += 1
+    elif adj == 0:
+        hc_vs_diff[int(hc)]['let_D'] += 1
+    else:
+        hc_vs_diff[int(hc)]['let_A'] += 1
+
+hc_diff_out = {}
+for h, c in sorted(hc_vs_diff.items()):
+    n = sum(v for k, v in c.items() if k.startswith('diff_'))
+    if n < 15:
+        continue
+    diffs = []
+    for k, v in c.most_common():
+        if not k.startswith('diff_'):
+            continue
+        diffs.append({'diff': int(k.replace('diff_', '')), 'n': v, 'pct': round(v / n * 100, 1)})
+        if len(diffs) >= 6:
+            break
+    hc_diff_out[str(h)] = {
+        'n': n,
+        'let_H': c.get('let_H', 0),
+        'let_D': c.get('let_D', 0),
+        'let_A': c.get('let_A', 0),
+        'top_diffs': diffs,
+    }
+
+out = {
+    'n_finished': n_finished,
+    'n_nspf': n_nspf,
+    'n_nspf_hc': n_nspf_hc,
+    'all': topn(score_all, 12),
+    'by_nspf': {k: topn(v, 8) for k, v in by_nspf.items() if sum(v.values()) >= 20},
+    'by_hc': {k: topn(v, 8) for k, v in by_hc.items() if sum(v.values()) >= 20},
+    'coverage': coverage,
+    'cross': cross_cov,
+    'hc_vs_diff': hc_diff_out,
+}
+print(json.dumps(out, ensure_ascii=True, indent=2))

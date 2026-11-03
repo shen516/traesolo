@@ -1,0 +1,19 @@
+fastapi==0.139.2
+uvicorn==0.51.0
+# 需 Python >=3.12（与 Dockerfile / 裸机文档一致）
+numpy==2.5.1
+scipy==1.16.3
+scikit-learn==1.6.1
+pyyaml==6.0.1
+joblib==1.4.2
+sqlalchemy==2.0.51
+bcrypt==5.0.0
+python-multipart==0.0.32
+schedule==1.2.2
+redis==5.2.1
+pymysql==1.1.1
+alembic==1.14.0
+pytest==8.3.4
+httpx==0.28.1
+rq==2.1.0
+prometheus-client==0.21.1
