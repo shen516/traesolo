@@ -16,6 +16,7 @@
 | 后端全量测试 | `cd backend` → `.\.venv\Scripts\python.exe -m pytest tests -q -p no:warnings`（输出中文乱码时先执行 `$env:PYTHONUTF8=1`） |
 | 单个测试 | 同上 + `tests/test_xxx.py::test_name` |
 | 前端 lint | `cd frontend` → `npm run lint`（`lint:fix` 自动修复；日常上限 `--max-warnings 50`；CI 用 `lint:ci` 要求 0 warning） |
+| 前端单测 | `cd frontend` → `npm run test:unit`（Vitest，纯逻辑模块） |
 | 前端构建 | `cd frontend` → `npm run build` |
 | Docker 部署 | 根目录 `docker compose up -d --build`（API 8000 / 前端 80 / redis / mysql / rq-worker） |
 

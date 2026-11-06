@@ -13,6 +13,11 @@ __pycache__/
 # ===== 环境文件 =====
 .env
 .env.local
+.env.production
+
+# ===== 本地备份产物 =====
+backups/
+*.sql.gz
 
 # ===== IDE =====
 .vscode/

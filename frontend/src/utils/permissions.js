@@ -23,19 +23,28 @@ export const ROUTE_PERMISSIONS = {
   Profile: ['profile:view'],
 }
 
-export function hasAnyPermission(...codes) {
-  const store = useUserStore()
-  if (store.isAdmin) return true
-  const perms = store.permissions || []
-  // 旧会话未带回权限码时不锁死菜单，避免升级后无法进入
+/** 纯函数：便于单测；旧会话无权限码时不锁死菜单。 */
+export function hasAnyPermissionFrom(permissions, isAdmin, ...codes) {
+  if (isAdmin) return true
+  const perms = permissions || []
   if (!perms.length) return true
   if (!codes.length) return true
   const set = new Set(perms)
   return codes.some((c) => set.has(c))
 }
 
-export function canAccessRoute(routeName) {
+export function hasAnyPermission(...codes) {
+  const store = useUserStore()
+  return hasAnyPermissionFrom(store.permissions, store.isAdmin, ...codes)
+}
+
+export function canAccessRouteFrom(permissions, isAdmin, routeName) {
   const required = ROUTE_PERMISSIONS[routeName]
   if (!required) return true
-  return hasAnyPermission(...required)
+  return hasAnyPermissionFrom(permissions, isAdmin, ...required)
+}
+
+export function canAccessRoute(routeName) {
+  const store = useUserStore()
+  return canAccessRouteFrom(store.permissions, store.isAdmin, routeName)
 }
