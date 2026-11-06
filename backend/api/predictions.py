@@ -5,12 +5,14 @@ from db.database import get_db
 from services import PredictionService, MatchService, TeamService, ModelService
 from services.subscription_service import mask_prediction, mask_prediction_list
 from api.deps import get_current_entitlements
-from pydantic import BaseModel, Field
-from typing import List, Optional, Literal, Set
+from pydantic import BaseModel, Field, model_validator
+from typing import Dict, List, Optional, Literal, Set
 import json
+import threading
 import time
 from api.authz import (
     RequireMatchRead, RequireMatchWrite, RequirePredictionCalc, RequirePredictionBatch,
+    RequireSimulation,
 )
 
 router = APIRouter()
@@ -18,6 +20,11 @@ router = APIRouter()
 # 同步 def 会进线程池，事件循环不被蒙特卡洛占住。整批另设墙钟上限。
 _BATCH_DEADLINE_SECONDS = 100
 _RECALC_DEADLINE_SECONDS = 180
+
+# /simulate 为 CPU 密集（最高 50000 次蒙特卡洛 × 基线/模拟两遍），
+# 限制同时执行数，超出直接 429，避免线程池被长任务耗尽。
+_SIMULATE_MAX_CONCURRENCY = 2
+_SIMULATE_SEMAPHORE = threading.Semaphore(_SIMULATE_MAX_CONCURRENCY)
 
 
 def _budget_exceeded(deadline: float) -> bool:
@@ -202,6 +209,186 @@ def _prediction_is_stale(prediction, current_version: str) -> bool:
 class ScenarioLockRequest(BaseModel):
     scenario_id: str = Field(..., description="ensemble|elo|poisson|xg|monte_carlo")
     lock: bool = Field(True, description="true=锁定为主结论；false=仅切换不锁定")
+
+
+class SimulationWeights(BaseModel):
+    elo: Optional[float] = Field(None, ge=0, le=1)
+    poisson: Optional[float] = Field(None, ge=0, le=1)
+    xg: Optional[float] = Field(None, ge=0, le=1)
+    monte_carlo: Optional[float] = Field(None, ge=0, le=1)
+
+
+class ManualSpThreeWay(BaseModel):
+    """胜平负 / 让球胜平负的手动 SP：各项可选，传入须 > 0。"""
+    win: Optional[float] = Field(None, gt=0)
+    draw: Optional[float] = Field(None, gt=0)
+    lose: Optional[float] = Field(None, gt=0)
+
+    def to_dict(self) -> Dict[str, float]:
+        return {k: v for k, v in self.model_dump().items() if v is not None}
+
+
+class ManualSp(BaseModel):
+    """手动 SP 覆盖：按玩法分组，选项键须为合法竞彩选项名，SP 须 > 0。"""
+    spf: Optional[ManualSpThreeWay] = None
+    nspf: Optional[ManualSpThreeWay] = None
+    bf: Optional[Dict[str, float]] = None
+    tg: Optional[Dict[str, float]] = None
+
+    @model_validator(mode="after")
+    def _validate_option_keys(self):
+        from services.prize_calculator import BF_ALL_KEYS, TG_KEYS
+        for label, mapping, valid_keys in (
+            ("比分", self.bf, BF_ALL_KEYS),
+            ("总进球", self.tg, TG_KEYS),
+        ):
+            if not mapping:
+                continue
+            invalid = [k for k in mapping if k not in valid_keys]
+            if invalid:
+                raise ValueError(f"非法{label}选项: {', '.join(map(str, invalid[:5]))}")
+            if any(v is None or float(v) <= 0 for v in mapping.values()):
+                raise ValueError(f"{label} SP 必须大于 0")
+        return self
+
+    def to_dict(self) -> Dict[str, Dict[str, float]]:
+        out: Dict[str, Dict[str, float]] = {}
+        if self.spf and self.spf.to_dict():
+            out["spf"] = self.spf.to_dict()
+        if self.nspf and self.nspf.to_dict():
+            out["nspf"] = self.nspf.to_dict()
+        if self.bf:
+            out["bf"] = {k: float(v) for k, v in self.bf.items()}
+        if self.tg:
+            out["tg"] = {k: float(v) for k, v in self.tg.items()}
+        return out
+
+
+class SimulationOverrides(BaseModel):
+    """高级选项：全部可选，不传即等价于该赛事的只读重新计算。"""
+    lambda_home: Optional[float] = Field(None, ge=0.05, le=6.0)
+    lambda_away: Optional[float] = Field(None, ge=0.05, le=6.0)
+    xg_lambda_home: Optional[float] = Field(None, ge=0.05, le=6.0)
+    xg_lambda_away: Optional[float] = Field(None, ge=0.05, le=6.0)
+    weights: Optional[SimulationWeights] = None
+    poisson_home_advantage: Optional[float] = Field(None, ge=0.8, le=1.6)
+    league_avg_goals: Optional[float] = Field(None, ge=1.5, le=4.5)
+    max_goals: Optional[int] = Field(None, ge=5, le=10)
+    # 枚举须与 environment_service / config.yaml 的 λ_factor 表一致，
+    # 非法值会让系数静默为 1，故在 API 层直接 422。
+    weather: Optional[Literal["晴", "多云", "阴", "小雨", "大雨", "雪"]] = None
+    temperature: Optional[str] = Field(None, max_length=20)
+    pitch_condition: Optional[Literal["优秀", "良好", "一般", "较差"]] = None
+    # 奖金计算模式
+    sp_mode: Optional[Literal["auto", "real", "synthetic"]] = "auto"
+    overround: Optional[float] = Field(None, ge=0.05, le=0.30)
+    handicap: Optional[int] = Field(None, ge=-10, le=10)
+    manual_sp: Optional[ManualSp] = None
+
+
+class SimulationRequest(BaseModel):
+    match_id: str = Field(..., description="目标未来赛事，须 status=upcoming")
+    simulations: int = Field(10000, ge=1000, le=50000)
+    seed: Optional[int] = Field(None, ge=0, le=2**32 - 1)
+    overrides: Optional[SimulationOverrides] = None
+
+
+class SensitivityRequest(BaseModel):
+    """λ 敏感性扫描：默认低模拟次数控制成本。"""
+    match_id: str
+    simulations: int = Field(2000, ge=1000, le=10000)
+    seed: Optional[int] = Field(None, ge=0, le=2**32 - 1)
+    overrides: Optional[SimulationOverrides] = None
+
+
+class BatchSimulateRequest(BaseModel):
+    """批量模拟 + 串关奖金：2~8 场未来赛事。"""
+    match_ids: List[str] = Field(..., min_length=2, max_length=8)
+    simulations: int = Field(5000, ge=1000, le=20000)
+    seed: Optional[int] = Field(None, ge=0, le=2**32 - 1)
+    sp_mode: Literal["auto", "real", "synthetic"] = "auto"
+    overround: float = Field(0.13, ge=0.05, le=0.30)
+
+
+def _check_weights_sum(req) -> None:
+    if req.overrides and req.overrides.weights is not None:
+        total = sum(
+            v for v in req.overrides.weights.model_dump(exclude_none=True).values()
+            if isinstance(v, (int, float))
+        )
+        if total <= 0:
+            raise HTTPException(status_code=400, detail="融合权重之和必须大于 0")
+
+
+@router.post("/simulate", dependencies=[RequireSimulation])
+def simulate_prediction(req: SimulationRequest, db: Session = Depends(get_db)):
+    """对已排期未来赛事做只读比分模拟预测（不写 predictions 表）。
+
+    同步 def：进入线程池，避免蒙特卡洛阻塞事件循环。
+    相同参数短时间内重复请求命中内存 TTL 缓存（meta.cache_hit 标记）。
+    """
+    from services import simulation_cache
+    from services.simulation_service import simulate_match
+
+    _check_weights_sum(req)
+
+    cache_key = simulation_cache.make_key(
+        req.match_id, req.simulations, req.seed,
+        req.overrides.model_dump(exclude_none=True) if req.overrides else None,
+    )
+    cached = simulation_cache.get(cache_key)
+    if cached is not None:
+        cached["meta"] = dict(cached.get("meta") or {}, cache_hit=True)
+        return cached
+
+    if not _SIMULATE_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="模拟任务繁忙，请稍后再试")
+    try:
+        result = simulate_match(db, req)
+    finally:
+        _SIMULATE_SEMAPHORE.release()
+
+    simulation_cache.set(cache_key, result)
+    result["meta"] = dict(result.get("meta") or {}, cache_hit=False)
+    return result
+
+
+@router.post("/simulate/sensitivity", dependencies=[RequireSimulation])
+def simulate_sensitivity(req: SensitivityRequest, db: Session = Depends(get_db)):
+    """λ 敏感性分析：主/客 λ 在基准值 ±0.3（步长 0.1）扫描的胜平负概率曲线数据。"""
+    from services.simulation_service import sensitivity_lambda
+
+    _check_weights_sum(req)
+    if not _SIMULATE_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="模拟任务繁忙，请稍后再试")
+    try:
+        return sensitivity_lambda(db, req)
+    finally:
+        _SIMULATE_SEMAPHORE.release()
+
+
+@router.post("/simulate/batch", dependencies=[RequireSimulation])
+def simulate_batch(req: BatchSimulateRequest, db: Session = Depends(get_db)):
+    """批量模拟多场未来赛事，并计算 2串1~8串1 串关奖金（胜平负组合）。"""
+    from services.simulation_service import simulate_batch as batch_run
+
+    if not _SIMULATE_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="模拟任务繁忙，请稍后再试")
+    try:
+        return batch_run(db, req)
+    finally:
+        _SIMULATE_SEMAPHORE.release()
+
+
+@router.get("/simulate/history", dependencies=[RequireSimulation])
+def simulate_history(
+    limit: int = Query(20, ge=1, le=50),
+    match_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """模拟历史：最近 N 次模拟的参数与结果摘要（仅回看，非正式预测记录）。"""
+    from services.simulation_service import list_history
+    return {"history": list_history(db, limit=limit, match_id=match_id)}
 
 
 @router.post("/match/{match_id}/scenario", dependencies=[RequirePredictionCalc])
