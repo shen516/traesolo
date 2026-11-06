@@ -132,7 +132,7 @@ async def get_league(league_id: str, db: Session = Depends(get_db)):
     league = LeagueService.get_by_id(db, league_id)
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    from db.models import Team, Match
+    from db.models import League, Match, Team
     teams_count = db.query(Team).filter(Team.league_id == league_id).count()
     matches_count = db.query(Match).filter(Match.league_id == league_id).count()
     children_count = db.query(League).filter(League.parent_id == league_id).count()

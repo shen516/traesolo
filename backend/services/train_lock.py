@@ -140,7 +140,8 @@ class TrainLock:
         if client is not None:
             try:
                 return client.get(LOCK_KEY)
-            except Exception:
+            except Exception as e:
+                logger.warning("读取训练锁 token 失败: %s", e)
                 return None
         with self._mem_guard:
             if self._mem_token and self._mem_expires > time.time():

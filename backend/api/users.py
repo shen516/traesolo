@@ -286,7 +286,7 @@ async def register_user(
             allowed_role_ids or [],
         )
     except Exception:
-        pass
+        logger.warning("AUDIT user.create log failed", exc_info=True)
 
     return {"message": "用户创建成功", "user_id": user.id, "user": UserResponse.model_validate(user)}
 
@@ -375,7 +375,7 @@ async def reset_password(
             user_id, current.id == user_id,
         )
     except Exception:
-        pass
+        logger.warning("AUDIT user.reset_password log failed", exc_info=True)
     return {"message": "密码重置成功"}
 
 

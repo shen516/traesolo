@@ -8,12 +8,15 @@ from api.deps import get_current_entitlements
 from pydantic import BaseModel, Field, model_validator
 from typing import Dict, List, Optional, Literal, Set
 import json
+import logging
 import threading
 import time
 from api.authz import (
     RequireMatchRead, RequireMatchWrite, RequirePredictionCalc, RequirePredictionBatch,
     RequireSimulation,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -162,7 +165,10 @@ def _current_model_version(db) -> str:
         if current and current.version:
             return current.version
     except Exception:
-        pass
+        logger.warning(
+            "resolve current model version failed; fallback v5.0.3",
+            exc_info=True,
+        )
     return "v5.0.3"
 
 

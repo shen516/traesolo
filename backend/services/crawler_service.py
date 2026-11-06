@@ -1986,7 +1986,7 @@ class CrawlerService:
             try:
                 db.rollback()
             except Exception:
-                pass
+                logger.warning("rollback match team stats failed for %s", match_id, exc_info=True)
             return 0
         finally:
             db.close()

@@ -92,11 +92,16 @@ def ensure_schema(force: bool = False):
 
     inspector = inspect(engine)
     tables = set(inspector.get_table_names())
+    # 一次拉齐各表列名，后续缺失列比对走内存，避免逐表重复 inspect round-trip
+    columns_by_table = {
+        t: {c["name"] for c in inspector.get_columns(t)}
+        for t in tables
+    }
 
     def _add_columns(table: str, columns: dict):
         if table not in tables:
             return
-        existing = {c["name"] for c in inspector.get_columns(table)}
+        existing = columns_by_table.get(table) or set()
         missing = {n: t for n, t in columns.items() if n not in existing}
         if not missing:
             return
@@ -106,9 +111,11 @@ def ensure_schema(force: bool = False):
             for name, typedef in missing.items():
                 try:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {typedef}"))
+                    existing.add(name)
                     logger.info("Schema: added %s.%s", table, name)
                 except Exception as e:
                     logger.warning("Schema: add %s.%s skipped: %s", table, name, e)
+        columns_by_table[table] = existing
 
     _add_columns("odds_snapshots", {
         "odds_bf_json": "TEXT NULL",

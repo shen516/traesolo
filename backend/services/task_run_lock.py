@@ -113,7 +113,7 @@ class TaskRunLock:
                 try:
                     client.delete(self._status_key(task_id))
                 except Exception:
-                    pass
+                    logger.warning("任务状态键删除失败 %s", task_id, exc_info=True)
             return removed
         with self._mem_guard:
             row = self._mem.get(task_id) or {}

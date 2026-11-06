@@ -139,8 +139,14 @@ def _init_leagues(db):
         {"id": "MLS", "name": "美职联", "icon": "🇺🇸", "region": "美洲", "level": 1, "avg_goals": 2.60, "is_active": True, "source_url": CANONICAL_FIVE00_URL.get("MLS")},
     ]
 
+    # 一次取出已有联赛，避免逐条 get_by_id round-trip
+    from db.models import League
+    existing_rows = {
+        row.id: row
+        for row in db.query(League).filter(League.id.in_([x["id"] for x in leagues])).all()
+    }
     for league_data in leagues:
-        existing = LeagueService.get_by_id(db, league_data["id"])
+        existing = existing_rows.get(league_data["id"])
         if not existing:
             LeagueService.create(db, league_data)
         else:

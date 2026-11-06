@@ -166,7 +166,7 @@ class SchedulerService:
             try:
                 db.close()
             except Exception:
-                pass
+                logger.warning("close scheduled_task_status session failed", exc_info=True)
 
         for task_id, info in self._registry.items():
             status = db_statuses.get(task_id)
@@ -428,7 +428,7 @@ class SchedulerService:
                         except (ValueError, TypeError):
                             pass
                 except Exception:
-                    pass
+                    logger.warning("task lock status enrich failed for %s", task_id, exc_info=True)
         except Exception as e:
             logger.debug("task in_progress lookup failed: %s", e)
         return result
