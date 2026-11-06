@@ -365,7 +365,6 @@ const scheduleTabs = [
 
 const loading = ref(false)
 const error = ref(null)
-const operating = ref(false)
 
 const runNowDialogVisible = ref(false)
 const runNowStatus = ref('running')
@@ -501,7 +500,7 @@ function formatCrawledData(data) {
   try {
     const obj = typeof data === 'string' ? JSON.parse(data) : data
     return JSON.stringify(obj, null, 2)
-  } catch (e) {
+  } catch (_e) {
     return String(data)
   }
 }

@@ -154,7 +154,7 @@ import { CHART_COLORS, MODEL_COLORS } from '@/utils/chartTheme'
 import CollapsibleSection from '@/components/common/CollapsibleSection.vue'
 import {
   modelStatus, modelStatusDetail, currentVersion,
-  overviewLoading, overviewError,
+  overviewLoading,
   isTraining, startTraining, fetchOverviewData,
   staleStats, staleStatsLoading, recalcState,
   fetchStaleStats, recalculateUpcoming,

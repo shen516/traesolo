@@ -312,13 +312,6 @@ function getCategoryName(category) {
   return categoryNames[category] || category || '-'
 }
 
-function getLevelName(level) {
-  if (level === 1) return '顶级'
-  if (level === 2) return '次级'
-  if (level === 3) return '三级'
-  return '未知'
-}
-
 const statsCards = computed(() => {
   const totalLeagues = total.value
   const active = leagues.value.filter(l => l.is_active).length

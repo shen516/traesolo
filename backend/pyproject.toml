@@ -1,0 +1,27 @@
+[project]
+name = "traesolo-backend"
+version = "5.0.0"
+requires-python = ">=3.12"
+description = "足球纯竞技量化分析工具后端"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+  ".venv",
+  "venv",
+  "_archive",
+]
+
+[tool.ruff.lint]
+# 存量 E/F 较多：CI 先卡语法与未定义名；本地可 `ruff check --select E,F` 逐步收敛
+select = [
+  "E9",   # runtime / syntax
+  "F63",  # invalid print/assert
+  "F7",   # syntax errors in type comments etc.
+  "F82",  # undefined names
+]
+ignore = []
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]  # conftest 需在 import app 前设环境变量

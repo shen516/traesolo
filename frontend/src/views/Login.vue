@@ -116,7 +116,7 @@ const refreshCaptcha = async () => {
     }
     const bin = hex.match(/.{1,2}/g).map(h => String.fromCharCode(parseInt(h, 16))).join('')
     captchaImage.value = `data:image/png;base64,${btoa(bin)}`
-  } catch (e) {
+  } catch (_e) {
     errorMsg.value = '获取验证码失败，请检查后端服务'
   }
 }
