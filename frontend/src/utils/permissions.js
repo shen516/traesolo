@@ -14,6 +14,7 @@ export const ROUTE_PERMISSIONS = {
   LeagueList: ['league:view', 'league:manage'],
   LeagueManage: ['league:config', 'league:manage'],
   TeamDetail: ['league:view', 'league:manage', 'match:upcoming', 'match:finished'],
+  Simulation: ['simulation:view', 'model:manage'],
   ModelManage: ['model:manage'],
   RiskControl: ['risk:manage'],
   ScheduleManage: ['schedule:manage'],

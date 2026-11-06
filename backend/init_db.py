@@ -12,18 +12,39 @@ from services import (
     LeagueService, TeamService, ModelService, MatchService, PlayerService
 )
 
+# 出厂弱口令（仅开发/测试）。生产必须通过 TRAESOLO_ADMIN_PASSWORD 注入。
+DEFAULT_ADMIN_PASSWORD = "admin123"
+
+
+def _is_production() -> bool:
+    return os.environ.get("TRAESOLO_PRODUCTION", "").lower() in ("1", "true", "yes")
+
+
+def _resolve_admin_password() -> str:
+    """优先读 TRAESOLO_ADMIN_PASSWORD；未设置则回退出厂弱口令。"""
+    injected = (os.environ.get("TRAESOLO_ADMIN_PASSWORD") or "").strip()
+    return injected or DEFAULT_ADMIN_PASSWORD
+
+
+def _assert_production_admin_password(password: str) -> None:
+    """生产环境禁止以默认弱口令启动。"""
+    if not _is_production():
+        return
+    injected = (os.environ.get("TRAESOLO_ADMIN_PASSWORD") or "").strip()
+    if not injected or password == DEFAULT_ADMIN_PASSWORD:
+        raise RuntimeError(
+            "TRAESOLO_PRODUCTION=1 时必须设置非默认的 TRAESOLO_ADMIN_PASSWORD，拒绝以弱口令启动"
+        )
+
+
 SUPER_ADMIN = {
     "username": "admin",
     "email": "admin@football-analytics.com",
-    "password": "admin123",
+    "password": DEFAULT_ADMIN_PASSWORD,
     "level": "professional",
     "subscription_plan": "flag_year",
     "subscription_status": "active",
 }
-
-# 出厂弱口令。仅当 admin 仍在使用该口令（或与其相同）时才强制首次登录改密，
-# 改过一次后 must_change_password 归零，不会被启动逻辑反复置回。
-DEFAULT_ADMIN_PASSWORD = SUPER_ADMIN["password"]
 
 
 def _skip_force_password() -> bool:
@@ -190,6 +211,10 @@ def _init_super_admin(db):
     """创建超级管理员"""
     from services import UserService
 
+    admin_password = _resolve_admin_password()
+    _assert_production_admin_password(admin_password)
+    SUPER_ADMIN["password"] = admin_password
+
     existing = UserService.get_by_username(db, SUPER_ADMIN["username"])
     if existing:
         # 老库 admin 对齐到旗舰版套餐（角色本身已绕过门控，此处仅为展示一致）
@@ -198,18 +223,31 @@ def _init_super_admin(db):
             existing.subscription_status = "active"
             if not existing.subscription_expire:
                 existing.subscription_expire = date.today() + timedelta(days=3650)
+        # 注入了非默认口令时：若库中哈希尚未对齐则更新（避免每次启动重哈希）。
+        if admin_password != DEFAULT_ADMIN_PASSWORD:
+            try:
+                aligned = bcrypt.checkpw(
+                    admin_password.encode("utf-8"),
+                    (existing.password_hash or "").encode("utf-8"),
+                )
+            except Exception:
+                aligned = False
+            if not aligned:
+                existing.password_hash = bcrypt.hashpw(
+                    admin_password.encode("utf-8"),
+                    bcrypt.gensalt(),
+                ).decode("utf-8")
+            existing.must_change_password = False
         # 弱口令账号一律强制首次登录改密；用户改过一次后本标志为 0，不再反复置回。
         # 本地开发可设 TRAESOLO_SKIP_FORCE_PASSWORD=1 跳过（测试与 CI 也走这个开关）。
-        if SUPER_ADMIN["password"] == DEFAULT_ADMIN_PASSWORD \
-                and not _skip_force_password() \
-                and not existing.must_change_password:
+        elif not _skip_force_password() and not existing.must_change_password:
             existing.must_change_password = True
         db.commit()
         print(f"  超级管理员已存在 (username={SUPER_ADMIN['username']})")
         return
 
     password_hash = bcrypt.hashpw(
-        SUPER_ADMIN["password"].encode('utf-8'),
+        admin_password.encode('utf-8'),
         bcrypt.gensalt()
     ).decode('utf-8')
 
@@ -224,7 +262,7 @@ def _init_super_admin(db):
         "subscription_expire": date.today() + timedelta(days=3650),
         "is_active": True,
         "must_change_password": (
-            not _skip_force_password() and SUPER_ADMIN["password"] == DEFAULT_ADMIN_PASSWORD
+            not _skip_force_password() and admin_password == DEFAULT_ADMIN_PASSWORD
         ),
     })
 
@@ -373,6 +411,8 @@ def _init_roles_permissions(db):
         {"name": "联赛配置", "code": "league:config", "type": "menu", "parent_id": 5, "path": "/league-manage", "icon": "⚙️", "sort_order": 2, "description": "联赛配置管理"},
         # 模型管理
         {"name": "模型管理", "code": "model:manage", "type": "menu", "parent_id": 0, "path": "/model", "icon": "🧠", "sort_order": 5, "description": "模型版本管理"},
+        # 模拟预测（对已排期未来赛事的只读比分推演）
+        {"name": "模拟预测", "code": "simulation:view", "type": "menu", "parent_id": 0, "path": "/simulation", "icon": "🎲", "sort_order": 6, "description": "未来赛事比分模拟预测与奖金分析"},
         # 风控体系
         {"name": "风控体系", "code": "risk:manage", "type": "menu", "parent_id": 0, "path": "/risk", "icon": "🛡️", "sort_order": 6, "description": "风险预警管理"},
         # 定时任务
@@ -488,6 +528,7 @@ def _init_roles_permissions(db):
                 perm_map["league:view"],
                 perm_map["league:config"],
                 perm_map["risk:manage"],
+                perm_map["simulation:view"],
                 perm_map["profile:view"]
             ]
         },
@@ -509,6 +550,7 @@ def _init_roles_permissions(db):
                 perm_map["match:jingcai_live"],
                 perm_map["league:view"],
                 perm_map["model:manage"],
+                perm_map["simulation:view"],
                 perm_map["profile:view"]
             ]
         },

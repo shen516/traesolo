@@ -78,6 +78,12 @@ const routes = [
     component: () => import('@/views/LeagueList.vue'),
     meta: { title: '联赛列表', icon: 'leagues', keepAlive: true }
   },
+  {
+    path: '/simulation',
+    name: 'Simulation',
+    component: () => import('@/views/Simulation.vue'),
+    meta: { title: '模拟预测', icon: 'simulation' }
+  },
   // 旧「我的关注」入口并入首页 tab
   {
     path: '/followed',

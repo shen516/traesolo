@@ -73,6 +73,7 @@ const allMenuGroups = [
       { path: '/', label: '首页', icon: '🏠', perms: ['dashboard:view'] },
       { path: '/matches', label: '赛事', icon: '⚽', perms: ['match:upcoming', 'match:finished', 'match:manage'], badgeKey: 'upcoming' },
       { path: '/leagues', label: '联赛列表', icon: '🏆', perms: ['league:view', 'league:manage'] },
+      { path: '/simulation', label: '模拟预测', icon: '🎲', perms: ['simulation:view', 'model:manage'] },
     ],
   },
   {
