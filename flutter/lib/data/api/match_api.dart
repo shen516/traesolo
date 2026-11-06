@@ -6,12 +6,34 @@ class MatchApi {
 
   final ApiClient _client;
 
-  Future<MatchListPage> getUpcoming({int page = 1, int pageSize = 20}) {
-    return _list('/matches/upcoming', page: page, pageSize: pageSize);
+  Future<MatchListPage> getUpcoming({
+    int page = 1,
+    int pageSize = 20,
+    String? leagueId,
+    String? keyword,
+  }) {
+    return _list(
+      '/matches/upcoming',
+      page: page,
+      pageSize: pageSize,
+      leagueId: leagueId,
+      keyword: keyword,
+    );
   }
 
-  Future<MatchListPage> getFinished({int page = 1, int pageSize = 20}) {
-    return _list('/matches/finished', page: page, pageSize: pageSize);
+  Future<MatchListPage> getFinished({
+    int page = 1,
+    int pageSize = 20,
+    String? leagueId,
+    String? keyword,
+  }) {
+    return _list(
+      '/matches/finished',
+      page: page,
+      pageSize: pageSize,
+      leagueId: leagueId,
+      keyword: keyword,
+    );
   }
 
   Future<MatchItem> getById(String id) async {
@@ -36,6 +58,8 @@ class MatchApi {
     String path, {
     required int page,
     required int pageSize,
+    String? leagueId,
+    String? keyword,
   }) async {
     final data = await _client.get<Map<String, dynamic>>(
       path,
@@ -43,6 +67,8 @@ class MatchApi {
         'page': page,
         'page_size': pageSize,
         'view': 'summary',
+        if (leagueId != null && leagueId.isNotEmpty) 'league_id': leagueId,
+        if (keyword != null && keyword.isNotEmpty) 'keyword': keyword,
       },
       parser: (raw) => Map<String, dynamic>.from(raw as Map),
     );

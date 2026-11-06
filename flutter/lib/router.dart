@@ -5,11 +5,13 @@ import 'package:go_router/go_router.dart';
 import 'features/auth/auth_state.dart';
 import 'features/auth/change_password_screen.dart';
 import 'features/auth/login_screen.dart';
+import 'features/data/data_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/match_detail/match_detail_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/shell/main_shell.dart';
+import 'features/team_detail/team_detail_screen.dart';
 
 final _rootKey = GlobalKey<NavigatorState>();
 final _shellKey = GlobalKey<NavigatorState>();
@@ -49,6 +51,14 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/change-password',
         builder: (context, state) => const ChangePasswordScreen(),
       ),
+      GoRoute(
+        path: '/teams/:id',
+        parentNavigatorKey: _rootKey,
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return TeamDetailScreen(teamId: id);
+        },
+      ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {
           return MainShell(navigationShell: navigationShell);
@@ -78,6 +88,14 @@ final routerProvider = Provider<GoRouter>((ref) {
                     },
                   ),
                 ],
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/data',
+                builder: (context, state) => const DataScreen(),
               ),
             ],
           ),

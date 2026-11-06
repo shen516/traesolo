@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/network/api_exception.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/match.dart';
+import '../auth/auth_state.dart';
+import '../common/async_state_pane.dart';
 
 final matchDetailProvider =
     FutureProvider.autoDispose.family<({MatchItem match, PredictionSummary? prediction}), String>(
@@ -22,6 +25,17 @@ final matchDetailProvider =
   },
 );
 
+final matchFavoriteProvider =
+    FutureProvider.autoDispose.family<bool, String>((ref, matchId) async {
+  final auth = ref.watch(authProvider);
+  final userId = auth.user?.id;
+  if (userId == null) return false;
+  final ids = await ref.watch(favoriteRepositoryProvider).matchIds(
+        userId is int ? userId : int.parse(userId.toString()),
+      );
+  return ids.contains(matchId);
+});
+
 class MatchDetailScreen extends ConsumerWidget {
   const MatchDetailScreen({super.key, required this.matchId});
 
@@ -30,26 +44,33 @@ class MatchDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(matchDetailProvider(matchId));
+    final favAsync = ref.watch(matchFavoriteProvider(matchId));
+    final isFav = switch (favAsync) {
+      AsyncData(:final value) => value,
+      _ => false,
+    };
 
     return Scaffold(
-      appBar: AppBar(title: const Text('赛事详情')),
-      body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(e is ApiException ? e.message : e.toString()),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: () => ref.invalidate(matchDetailProvider(matchId)),
-                  child: const Text('重试'),
-                ),
-              ],
+      appBar: AppBar(
+        title: const Text('赛事详情'),
+        actions: [
+          IconButton(
+            tooltip: isFav ? '取消收藏' : '收藏赛事',
+            onPressed: favAsync.isLoading
+                ? null
+                : () => _toggleFavorite(context, ref, currentlyFavorite: isFav),
+            icon: Icon(
+              isFav ? Icons.bookmark : Icons.bookmark_border,
+              color: isFav ? AppColors.gold : null,
             ),
           ),
+        ],
+      ),
+      body: async.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => AsyncStatePane.error(
+          error: e,
+          onRetry: () => ref.invalidate(matchDetailProvider(matchId)),
         ),
         data: (data) {
           final m = data.match;
@@ -75,10 +96,15 @@ class MatchDetailScreen extends ConsumerWidget {
                       Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              m.homeTeam.displayName,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                            child: InkWell(
+                              onTap: m.homeTeam.id.isEmpty
+                                  ? null
+                                  : () => context.push('/teams/${m.homeTeam.id}'),
+                              child: Text(
+                                m.homeTeam.displayName,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                              ),
                             ),
                           ),
                           Text(
@@ -90,10 +116,15 @@ class MatchDetailScreen extends ConsumerWidget {
                             ),
                           ),
                           Expanded(
-                            child: Text(
-                              m.awayTeam.displayName,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                            child: InkWell(
+                              onTap: m.awayTeam.id.isEmpty
+                                  ? null
+                                  : () => context.push('/teams/${m.awayTeam.id}'),
+                              child: Text(
+                                m.awayTeam.displayName,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                              ),
                             ),
                           ),
                         ],
@@ -157,6 +188,34 @@ class MatchDetailScreen extends ConsumerWidget {
         },
       ),
     );
+  }
+
+  Future<void> _toggleFavorite(
+    BuildContext context,
+    WidgetRef ref, {
+    required bool currentlyFavorite,
+  }) async {
+    final auth = ref.read(authProvider);
+    final userId = auth.user?.id;
+    if (userId == null) return;
+    try {
+      await ref.read(favoriteRepositoryProvider).toggleMatch(
+            userId is int ? userId : int.parse(userId.toString()),
+            matchId,
+            currentlyFavorite: currentlyFavorite,
+          );
+      ref.invalidate(matchFavoriteProvider(matchId));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(currentlyFavorite ? '已取消收藏' : '已收藏赛事')),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is ApiException ? e.message : e.toString())),
+      );
+    }
   }
 
   Widget _kv(String k, String v) {

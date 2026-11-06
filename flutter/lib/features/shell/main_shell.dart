@@ -25,6 +25,11 @@ class MainShell extends StatelessWidget {
             label: '赛事',
           ),
           NavigationDestination(
+            icon: Icon(Icons.table_chart_outlined),
+            selectedIcon: Icon(Icons.table_chart),
+            label: '数据',
+          ),
+          NavigationDestination(
             icon: Icon(Icons.person_outline),
             selectedIcon: Icon(Icons.person),
             label: '我的',

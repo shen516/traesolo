@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/network/api_exception.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/match.dart';
+import '../common/async_state_pane.dart';
 
 enum MatchTab { upcoming, finished }
 
@@ -56,14 +56,15 @@ class MatchesScreen extends ConsumerWidget {
           Expanded(
             child: asyncList.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => _ErrorPane(
-                message: e is ApiException ? e.message : e.toString(),
+              error: (e, _) => AsyncStatePane.error(
+                error: e,
                 onRetry: () => ref.invalidate(matchListProvider),
               ),
               data: (page) {
                 if (page.matches.isEmpty) {
-                  return const Center(
-                    child: Text('暂无赛事', style: TextStyle(color: AppColors.textMuted)),
+                  return AsyncStatePane.empty(
+                    message: '暂无赛事',
+                    onRetry: () => ref.invalidate(matchListProvider),
                   );
                 }
                 return RefreshIndicator(
@@ -171,28 +172,4 @@ class _MatchCard extends StatelessWidget {
 String _pct(double? v) {
   if (v == null) return '-';
   return '${(v * 100).toStringAsFixed(1)}%';
-}
-
-class _ErrorPane extends StatelessWidget {
-  const _ErrorPane({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            ElevatedButton(onPressed: onRetry, child: const Text('重试')),
-          ],
-        ),
-      ),
-    );
-  }
 }

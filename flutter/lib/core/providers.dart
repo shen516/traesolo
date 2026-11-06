@@ -2,9 +2,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/api/auth_api.dart';
+import '../data/api/favorite_api.dart';
+import '../data/api/follow_api.dart';
+import '../data/api/league_api.dart';
 import '../data/api/match_api.dart';
+import '../data/api/scorer_api.dart';
+import '../data/api/standing_api.dart';
+import '../data/api/team_api.dart';
 import '../data/repositories/auth_repository.dart';
+import '../data/repositories/data_repository.dart';
+import '../data/repositories/favorite_repository.dart';
+import '../data/repositories/follow_repository.dart';
+import '../data/repositories/league_repository.dart';
 import '../data/repositories/match_repository.dart';
+import '../data/repositories/team_repository.dart';
 import '../data/session_store.dart';
 import 'network/api_client.dart';
 
@@ -38,4 +49,29 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 
 final matchRepositoryProvider = Provider<MatchRepository>((ref) {
   return MatchRepository(MatchApi(ref.watch(apiClientProvider)));
+});
+
+final leagueRepositoryProvider = Provider<LeagueRepository>((ref) {
+  return LeagueRepository(LeagueApi(ref.watch(apiClientProvider)));
+});
+
+final teamRepositoryProvider = Provider<TeamRepository>((ref) {
+  return TeamRepository(TeamApi(ref.watch(apiClientProvider)));
+});
+
+final dataRepositoryProvider = Provider<DataRepository>((ref) {
+  final client = ref.watch(apiClientProvider);
+  return DataRepository(
+    StandingApi(client),
+    ScorerApi(client),
+    ref.watch(teamRepositoryProvider),
+  );
+});
+
+final followRepositoryProvider = Provider<FollowRepository>((ref) {
+  return FollowRepository(FollowApi(ref.watch(apiClientProvider)));
+});
+
+final favoriteRepositoryProvider = Provider<FavoriteRepository>((ref) {
+  return FavoriteRepository(FavoriteApi(ref.watch(apiClientProvider)));
 });

@@ -1,5 +1,4 @@
 import 'package:dio/dio.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../config.dart';
 import 'api_exception.dart';
@@ -107,13 +106,49 @@ class ApiClient {
     }
   }
 
+  Future<T> put<T>(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? queryParameters,
+    T Function(dynamic data)? parser,
+  }) async {
+    try {
+      final res = await _dio.put<dynamic>(
+        path,
+        data: data,
+        queryParameters: queryParameters,
+      );
+      final body = res.data;
+      if (parser != null) return parser(body);
+      return body as T;
+    } on DioException catch (e) {
+      throw _unwrap(e);
+    }
+  }
+
+  Future<T> delete<T>(
+    String path, {
+    Object? data,
+    Map<String, dynamic>? queryParameters,
+    T Function(dynamic data)? parser,
+  }) async {
+    try {
+      final res = await _dio.delete<dynamic>(
+        path,
+        data: data,
+        queryParameters: queryParameters,
+      );
+      final body = res.data;
+      if (parser != null) return parser(body);
+      return body as T;
+    } on DioException catch (e) {
+      throw _unwrap(e);
+    }
+  }
+
   ApiException _unwrap(DioException e) {
     final err = e.error;
     if (err is ApiException) return err;
     return ApiException(e.message ?? '网络异常', statusCode: e.response?.statusCode);
   }
 }
-
-final apiClientProvider = Provider<ApiClient>((ref) {
-  throw UnimplementedError('apiClientProvider 需在 main 中 override');
-});
