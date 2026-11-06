@@ -397,6 +397,38 @@ def simulate_history(
     return {"history": list_history(db, limit=limit, match_id=match_id)}
 
 
+class BacktestRequest(BaseModel):
+    """用当前 overrides 在完赛样本上评估命中率 / Brier（只读，不写 predictions）。"""
+    overrides: Optional[SimulationOverrides] = None
+    league_id: Optional[str] = None
+    days: int = Field(60, ge=7, le=180)
+    limit: int = Field(60, ge=10, le=120)
+    simulations: int = Field(2000, ge=500, le=5000)
+    seed: Optional[int] = Field(None, ge=0, le=2**32 - 1)
+
+
+@router.post("/simulate/backtest", dependencies=[RequireSimulation])
+def simulate_backtest(req: BacktestRequest, db: Session = Depends(get_db)):
+    """历史回测联动：完赛样本上验证参数组合（分析用，非投注建议）。"""
+    from services.simulation_backtest import run_parameter_backtest
+
+    _check_weights_sum(req)
+    if not _SIMULATE_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="模拟任务繁忙，请稍后再试")
+    try:
+        return run_parameter_backtest(
+            db,
+            overrides=req.overrides,
+            league_id=req.league_id,
+            days=req.days,
+            limit=req.limit,
+            seed=req.seed,
+            simulations=req.simulations,
+        )
+    finally:
+        _SIMULATE_SEMAPHORE.release()
+
+
 @router.post("/match/{match_id}/scenario", dependencies=[RequirePredictionCalc])
 async def set_match_scenario(
     match_id: str,

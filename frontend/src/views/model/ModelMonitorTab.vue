@@ -119,6 +119,47 @@
       <p v-else-if="!monitorLoading" class="empty-hint">暂无赔率对照样本（需竞彩 SP + 完赛预测）</p>
     </div>
 
+    <div class="card monitor-card" style="margin-top: 16px">
+      <div class="card-header">
+        <h2 class="card-title">分联赛 / 分玩法准确率</h2>
+        <span class="card-sub">近 {{ monitorDays }} 天完赛预测即时聚合（分析用）</span>
+      </div>
+      <div v-if="monitorBreakdown" class="monitor-body">
+        <div class="monitor-kpis">
+          <div class="monitor-kpi">
+            <span class="qk-label">胜平负样本</span>
+            <b>{{ monitorBreakdown.sample_size ?? 0 }}</b>
+            <span class="qk-sub">近 {{ monitorBreakdown.period_days }} 天</span>
+          </div>
+          <div class="monitor-kpi" v-for="(row, key) in playBreakdownRows" :key="key">
+            <span class="qk-label">{{ row.label }}</span>
+            <b>{{ formatMetricPct(row.accuracy) }}</b>
+            <span class="qk-sub">
+              样本 {{ row.sample_size ?? 0 }}
+              <template v-if="row.brier != null"> · Brier {{ formatMetricNum(row.brier) }}</template>
+            </span>
+          </div>
+        </div>
+        <div v-if="monitorBreakdown.by_league?.length" class="breakdown-table-wrap">
+          <table class="breakdown-table">
+            <thead>
+              <tr><th>联赛</th><th>样本</th><th>准确率</th><th>Brier</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in monitorBreakdown.by_league" :key="r.league_id">
+                <td>{{ r.league_id }}</td>
+                <td>{{ r.sample_size }}</td>
+                <td>{{ formatMetricPct(r.accuracy) }}</td>
+                <td>{{ formatMetricNum(r.brier) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="empty-hint">暂无分联赛样本</p>
+      </div>
+      <p v-else-if="!monitorLoading" class="empty-hint">暂无分维准确率数据</p>
+    </div>
+
     <ScoreTop3BacktestCard :active="isMonitorActive" />
   </div>
 </template>
@@ -151,9 +192,19 @@ const monitorDays = ref(30)
 const monitorDrift = ref(null)
 const monitorCalibration = ref(null)
 const monitorOddsDeviation = ref(null)
+const monitorBreakdown = ref(null)
 const monitorLoading = ref(false)
 const monitorError = ref(null)
 const accuracyTrend = ref([])
+
+const playBreakdownRows = computed(() => {
+  const play = monitorBreakdown.value?.by_play || {}
+  return [
+    { key: '1x2', label: '胜平负', ...(play['1x2'] || {}) },
+    { key: 'score', label: '主线比分', ...(play.score || {}) },
+    { key: 'totals', label: '总进球', ...(play.totals || {}) },
+  ]
+})
 
 function initTrendChart() {
   if (!trendChartRef.value) return
@@ -247,14 +298,16 @@ async function fetchMonitor() {
   monitorLoading.value = true
   monitorError.value = null
   try {
-    const [drift, cal, oddsDev] = await Promise.all([
+    const [drift, cal, oddsDev, breakdown] = await Promise.all([
       modelApi.getMonitorDrift({ days: monitorDays.value }),
       modelApi.getMonitorCalibration({ days: monitorDays.value }),
       modelApi.getMonitorOddsDeviation({ days: monitorDays.value }),
+      modelApi.getMonitorBreakdown({ days: monitorDays.value }),
     ])
     monitorDrift.value = drift
     monitorCalibration.value = cal
     monitorOddsDeviation.value = oddsDev
+    monitorBreakdown.value = breakdown
     await nextTick()
     initCalibrationChart()
   } catch (e) {
@@ -373,5 +426,27 @@ onBeforeUnmount(() => {
 }
 .monitor-chart-head {
   margin-bottom: 8px;
+}
+.breakdown-table-wrap {
+  overflow-x: auto;
+  margin-top: 4px;
+}
+.breakdown-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.breakdown-table th,
+.breakdown-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+.breakdown-table th {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.breakdown-table td {
+  color: var(--text-primary);
 }
 </style>

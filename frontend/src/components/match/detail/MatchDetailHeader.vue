@@ -17,9 +17,13 @@
         >
           {{ recalculating ? '计算中...' : '重新计算预测' }}
         </button>
-        <button class="export-btn" @click="$emit('export')">
+        <button class="export-btn" :disabled="exporting" @click="$emit('export', 'txt')">
           <span class="export-icon">📥</span>
-          <span>导出文本报告</span>
+          <span>{{ exporting ? '导出中...' : '导出 TXT' }}</span>
+        </button>
+        <button class="export-btn" :disabled="exporting" @click="$emit('export', 'xlsx')">
+          <span class="export-icon">📊</span>
+          <span>{{ exporting ? '导出中...' : '导出 Excel' }}</span>
         </button>
       </div>
     </div>
@@ -240,6 +244,7 @@ defineProps({
   injuryAlerts: { type: Array, default: () => [] },
   recalculating: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
+  exporting: { type: Boolean, default: false },
   predictError: { type: String, default: '' },
 })
 

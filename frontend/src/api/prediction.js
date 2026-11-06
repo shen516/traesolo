@@ -34,6 +34,8 @@ export const predictionApi = {
   simulateBatch: (payload) => request.post('/predictions/simulate/batch', payload, { timeout: 180000 }),
   /** 模拟历史（最近 N 次参数与结果摘要） */
   simulateHistory: (params = {}) => request.get('/predictions/simulate/history', { params }),
+  /** 参数历史回测：完赛样本上评估命中率 / Brier（只读） */
+  simulateBacktest: (payload) => request.post('/predictions/simulate/backtest', payload, { timeout: 180000 }),
   delete: (id) => request.delete(`/predictions/${id}`),
   /** 直接双队计算（原 /predict 孤儿路由，已收编到 /predictions/calculate） */
   compute: (homeTeam, awayTeam) => request.post('/predictions/calculate', { home_team: homeTeam, away_team: awayTeam }),

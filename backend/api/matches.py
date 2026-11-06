@@ -665,6 +665,40 @@ async def get_match_odds_snapshots(
     return {"match_id": match_id, "snapshots": list_snapshots(db, match_id, limit=limit)}
 
 
+@router.get("/{match_id}/report", dependencies=[RequireMatchRead])
+async def export_match_report(
+    match_id: str,
+    fmt: Literal["txt", "xlsx"] = Query("txt", description="导出格式"),
+    db: Session = Depends(get_db),
+):
+    """赛事分析报告导出（TXT / Excel）。仅供学习研究，不构成投注建议。"""
+    from fastapi.responses import Response
+    from services.match_report_export import build_report_payload, render_txt, render_xlsx
+
+    try:
+        payload = build_report_payload(db, match_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+    if fmt == "xlsx":
+        data = render_xlsx(payload)
+        return Response(
+            content=data,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f'attachment; filename="match-report-{match_id}.xlsx"'
+            },
+        )
+    data = render_txt(payload)
+    return Response(
+        content=data,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="match-report-{match_id}.txt"'
+        },
+    )
+
+
 @router.get("/{match_id}/player-stats", dependencies=[RequireMatchRead])
 async def get_match_player_stats(match_id: str, db: Session = Depends(get_db)):
     """获取赛事球员统计数据"""

@@ -28,6 +28,7 @@
       :injury-alerts="injuryAlerts"
       :recalculating="recalculating"
       :loading="loading"
+      :exporting="exporting"
       :predict-error="predictError"
       @back="goBack"
       @recalculate="recalculatePrediction"
@@ -126,7 +127,6 @@ import {
   formatTime,
   normalizePrediction,
   normalizePlayerStats,
-  xgCoverageText,
 } from '@/components/match/detail/matchDetailFormat'
 import { useMatchDetailScenarios } from '@/composables/useMatchDetailScenarios'
 
@@ -147,6 +147,7 @@ const leagues = ref([])
 const loading = ref(true)
 const error = ref(null)
 const recalculating = ref(false)
+const exporting = ref(false)
 const predictError = ref('')
 const playerStats = ref([])
 const playerStatsLoading = ref(false)
@@ -442,65 +443,25 @@ function handleResize() {
   modelRef.value?.handleResize?.()
 }
 
-function exportReport() {
-  if (!match.value) return
-  const m = match.value
-  const home = getTeam(m.homeTeam).name
-  const away = getTeam(m.awayTeam).name
-  const content = `足球量化分析报告
-========================================
-赛事ID: ${m.id}
-联赛: ${getLeague(m.league).name}
-对阵: ${home} vs ${away}
-时间: ${m.date} ${m.time}
-场地: ${m.venue}
-天气: ${m.weather} ${m.temperature}
-草坪: ${m.pitch}
-
-【概率分布】
-  主队胜: ${(m.prediction.homeWinProb * 100).toFixed(1)}%
-  平局:   ${(m.prediction.drawProb * 100).toFixed(1)}%
-  客队胜: ${(m.prediction.awayWinProb * 100).toFixed(1)}%
-
-【预期进球数 λ】
-  ${home} (主): ${m.prediction.lambdaHome}
-  ${away} (客): ${m.prediction.lambdaAway}
-${m.prediction.xgHome != null ? `
-【xG λ】覆盖 ${xgCoverageText(m.prediction.xgCoverage)}
-  ${home} (主): ${m.prediction.xgHome}
-  ${away} (客): ${m.prediction.xgAway}
-` : ''}
-【融合权重】
-  版本: ${m.prediction.modelVersion || '-'}
-  来源: ${weightSourceText(m.prediction.weightSource)}
-  权重: ${weightUsedList.value.map((w) => `${w.label} ${w.pct}`).join(' / ') || '未记录'}
-
-【预测结论】
-  倾向: ${m.prediction.tendency}
-  信心等级: ${m.prediction.confidence}
-  风险等级: ${m.prediction.riskLevel}
-  主线比分: ${m.prediction.mainScore}
-  备选剧本: ${(m.prediction.altScores || []).join('、')}
-  总进球预测: ${m.prediction.totalGoals}
-
-【关键变量】
-${(m.prediction.keyVariables || []).map((v) => '  - ' + v).join('\n')}
-
-【简要分析】
-${m.prediction.analysis}
-
-========================================
-报告生成时间: ${new Date().toLocaleString('zh-CN')}
-`
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `match-report-${m.id}.txt`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+async function exportReport(fmt = 'txt') {
+  if (!match.value || exporting.value) return
+  exporting.value = true
+  predictError.value = ''
+  try {
+    const blob = await matchApi.downloadReport(match.value.id, fmt === 'xlsx' ? 'xlsx' : 'txt')
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `match-report-${match.value.id}.${fmt === 'xlsx' ? 'xlsx' : 'txt'}`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (err) {
+    predictError.value = err?.message || '报告导出失败'
+  } finally {
+    exporting.value = false
+  }
 }
 
 async function recalculatePrediction() {

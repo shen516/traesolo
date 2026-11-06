@@ -17,6 +17,7 @@ export const modelApi = {
   getMonitorCalibration: (params = {}) => request.get('/model/monitor/calibration', { params }),
   getMonitorDrift: (params = {}) => request.get('/model/monitor/drift', { params }),
   getMonitorOddsDeviation: (params = {}) => request.get('/model/monitor/odds-deviation', { params }),
+  getMonitorBreakdown: (params = {}) => request.get('/model/monitor/breakdown', { params }),
   getJobStatus: (jobId) => request.get(`/model/jobs/${jobId}`),
 }
 

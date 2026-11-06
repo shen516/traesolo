@@ -1,4 +1,5 @@
-import request from './http'
+import axios from 'axios'
+import request, { API_BASE_URL } from './http'
 
 /** 赛事接口（竞彩相关见 jingcai.js） */
 export const matchApi = {
@@ -14,6 +15,17 @@ export const matchApi = {
   getPredictionHistory: (matchId, limit = 10) => request.get(`/matches/${matchId}/prediction/history`, { params: { limit } }),
   getPlayerStats: (matchId) => request.get(`/matches/${matchId}/player-stats`),
   getOddsSnapshots: (matchId, limit = 50) => request.get(`/matches/${matchId}/odds-snapshots`, { params: { limit } }),
+  /** 赛事分析报告导出（txt / xlsx），返回 Blob */
+  downloadReport: async (matchId, fmt = 'txt') => {
+    const token = localStorage.getItem('token')
+    const res = await axios.get(`${API_BASE_URL}/matches/${matchId}/report`, {
+      params: { fmt },
+      responseType: 'blob',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      timeout: 60000,
+    })
+    return res.data
+  },
   crawlHistorical: (leagueId = null, daysBack = 30, crawlType = 'manual') => request.post(`/matches/crawl/historical`, null, { params: { league_id: leagueId, days_back: daysBack, crawl_type: crawlType } }),
   create: (data) => request.post('/matches/', data),
   update: (id, data) => request.put(`/matches/${id}`, data),

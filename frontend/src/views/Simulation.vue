@@ -388,6 +388,70 @@
       </div>
     </div>
 
+    <!-- 参数历史回测 -->
+    <div class="card">
+      <div class="card-header">
+        <h2 class="card-title">参数历史回测</h2>
+        <span class="card-sub">用当前高级选项在完赛样本上评估命中率 / Brier（分析用）</span>
+      </div>
+      <div class="filter-row backtest-row">
+        <select v-model="backtest.leagueId" class="filter-select">
+          <option value="">全部联赛</option>
+          <option v-for="l in leagues" :key="'bt-' + l.id" :value="l.id">{{ l.name }}</option>
+        </select>
+        <label class="bt-label">近
+          <input v-model.number="backtest.days" type="number" min="7" max="180" class="filter-input bt-num" />
+          天
+        </label>
+        <label class="bt-label">样本
+          <input v-model.number="backtest.limit" type="number" min="10" max="120" class="filter-input bt-num" />
+        </label>
+        <button
+          class="btn btn-outline"
+          :disabled="backtestRunning || !!validationError"
+          @click="runBacktest"
+        >
+          {{ backtestRunning ? '回测中...' : '运行回测' }}
+        </button>
+      </div>
+      <div v-if="backtestError" class="state-banner error-banner"><span>⚠️ {{ backtestError }}</span></div>
+      <div v-if="backtestResult" class="backtest-result">
+        <div class="monitor-kpis bt-kpis">
+          <div class="monitor-kpi">
+            <span class="qk-label">评估场次</span>
+            <b>{{ backtestResult.evaluated ?? 0 }}</b>
+            <span class="qk-sub">请求 {{ backtestResult.requested ?? 0 }} · 错误 {{ backtestResult.errors ?? 0 }}</span>
+          </div>
+          <div class="monitor-kpi">
+            <span class="qk-label">命中率</span>
+            <b>{{ backtestResult.hit_rate != null ? pct(backtestResult.hit_rate) : '—' }}</b>
+            <span class="qk-sub">近 {{ backtestResult.period_days }} 天</span>
+          </div>
+          <div class="monitor-kpi">
+            <span class="qk-label">Brier</span>
+            <b>{{ backtestResult.brier != null ? fmt(backtestResult.brier) : '—' }}</b>
+            <span class="qk-sub">越低越好</span>
+          </div>
+        </div>
+        <p class="disclaimer">{{ backtestResult.disclaimer }}</p>
+        <table v-if="backtestResult.samples?.length" class="data-table compact">
+          <thead>
+            <tr><th>日期</th><th>联赛</th><th>实际</th><th>预测</th><th>命中</th><th>主/平/客</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in backtestResult.samples" :key="s.match_id">
+              <td>{{ s.match_date }}</td>
+              <td>{{ s.league_id }}</td>
+              <td>{{ outcomeLabel(s.actual) }}</td>
+              <td>{{ outcomeLabel(s.predicted) }}</td>
+              <td :class="s.hit ? 'pos' : 'neg'">{{ s.hit ? '✓' : '✗' }}</td>
+              <td>{{ pct(s.probs?.home) }} / {{ pct(s.probs?.draw) }} / {{ pct(s.probs?.away) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- 模拟历史 -->
     <div class="card">
       <div class="card-header">
@@ -743,6 +807,44 @@ function renderSensChart() {
       { name: '客胜(客λ)', type: 'line', xAxisIndex: 1, data: mk(s.lambda_away.points, 'away_win_prob'), lineStyle: { type: 'dashed' }, itemStyle: { color: CHART_COLORS.orange } },
     ],
   }, true)
+}
+
+// ---------- 参数历史回测 ----------
+const backtest = reactive({ leagueId: '', days: 60, limit: 60 })
+const backtestRunning = ref(false)
+const backtestError = ref('')
+const backtestResult = ref(null)
+
+function outcomeLabel(v) {
+  return ({ home: '主胜', draw: '平局', away: '客胜' })[v] || v || '—'
+}
+
+async function runBacktest() {
+  if (backtestRunning.value || validationError.value) return
+  backtestRunning.value = true
+  backtestError.value = ''
+  backtestResult.value = null
+  try {
+    const payload = {
+      days: backtest.days || 60,
+      limit: backtest.limit || 60,
+      simulations: Math.min(Math.max(Number(adv.simulations) || 2000, 500), 5000),
+      seed: adv.seed != null && adv.seed !== '' ? Number(adv.seed) : null,
+    }
+    if (backtest.leagueId) payload.league_id = backtest.leagueId
+    const overrides = buildOverrides()
+    if (overrides) {
+      const ov = { ...overrides }
+      delete ov.sp_mode
+      delete ov.handicap
+      payload.overrides = ov
+    }
+    backtestResult.value = await predictionApi.simulateBacktest(payload)
+  } catch (e) {
+    backtestError.value = e?.message || '回测失败'
+  } finally {
+    backtestRunning.value = false
+  }
 }
 
 // ---------- 模拟历史 ----------
@@ -1242,6 +1344,28 @@ onBeforeUnmount(() => {
 .data-table.compact td, .data-table.compact th { padding: 6px 10px; }
 .value-row { background: rgba(52, 211, 153, 0.06); }
 .disclaimer { margin-top: 12px; font-size: 12px; color: var(--text-muted, #8b93a7); }
+.backtest-row { align-items: center; }
+.bt-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted, #8b93a7); }
+.bt-num { width: 72px; }
+.backtest-result { margin-top: 8px; }
+.bt-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.monitor-kpi {
+  background: var(--input-bg, #0f1420);
+  border: 1px solid var(--border-color, #232b3b);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.monitor-kpi .qk-label { font-size: 12px; color: var(--text-muted, #8b93a7); }
+.monitor-kpi b { font-size: 18px; color: var(--text-primary, #e5e9f0); }
+.monitor-kpi .qk-sub { font-size: 11px; color: var(--text-muted, #8b93a7); }
 
 .component-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .component-card { background: var(--input-bg, #0f1420); border-radius: 10px; padding: 12px 14px; }

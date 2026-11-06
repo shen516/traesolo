@@ -5,7 +5,7 @@
         <span class="title-bar"></span>
         赔率时序（分析展示）
       </div>
-      <p class="odds-disclaimer">仅用于观察市场共识变化，不构成投注建议。</p>
+      <p class="odds-disclaimer">仅用于观察市场共识变化与模型概率对照，不构成投注建议。</p>
       <div v-if="hasAnyOdds" class="odds-current-block">
         <div class="odds-current">
           胜平负：胜 {{ fmtOdds(match.oddsNspfWin) }} / 平 {{ fmtOdds(match.oddsNspfDraw) }} / 负 {{ fmtOdds(match.oddsNspfLose) }}
@@ -14,6 +14,34 @@
           让球 {{ handicapLabel || '-' }}：胜 {{ fmtOdds(match.oddsSpfWin) }} / 平 {{ fmtOdds(match.oddsSpfDraw) }} / 负 {{ fmtOdds(match.oddsSpfLose) }}
         </div>
       </div>
+
+      <div v-if="modelCompare" class="model-compare-block">
+        <div class="compare-title">模型概率 vs 最新市场隐含</div>
+        <div class="compare-row">
+          <span class="cmp-label">模型</span>
+          <span>主 {{ pct1(modelCompare.model.home) }}</span>
+          <span>平 {{ pct1(modelCompare.model.draw) }}</span>
+          <span>客 {{ pct1(modelCompare.model.away) }}</span>
+        </div>
+        <div class="compare-row">
+          <span class="cmp-label">市场</span>
+          <span>主 {{ pct1(modelCompare.implied.home) }}</span>
+          <span>平 {{ pct1(modelCompare.implied.draw) }}</span>
+          <span>客 {{ pct1(modelCompare.implied.away) }}</span>
+        </div>
+        <div class="compare-row deltas" v-if="modelCompare.vs">
+          <span class="cmp-label">偏差</span>
+          <span :class="deltaClass(modelCompare.vs.deltaHome)">{{ signedPt(modelCompare.vs.deltaHome) }}</span>
+          <span :class="deltaClass(modelCompare.vs.deltaDraw)">{{ signedPt(modelCompare.vs.deltaDraw) }}</span>
+          <span :class="deltaClass(modelCompare.vs.deltaAway)">{{ signedPt(modelCompare.vs.deltaAway) }}</span>
+        </div>
+        <div class="compare-meta" v-if="modelCompare.vs">
+          最大偏差 {{ modelCompare.vs.maxAbsDeltaPct.toFixed(1) }}pt（{{ modelCompare.vs.maxSideLabel }}）
+          · 倾向{{ modelCompare.vs.agreeTendency ? '一致' : '不一致' }}
+          · overround {{ modelCompare.implied.overroundPct.toFixed(1) }}%
+        </div>
+      </div>
+
       <UpgradeHint
         v-if="oddsSnapshotsLocked"
         text="赔率时序快照需专业版解锁"
@@ -29,17 +57,36 @@
               <th>胜</th>
               <th>平</th>
               <th>负</th>
+              <th>隐含主/平/客</th>
+              <th>vs 模型</th>
               <th>来源</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="s in oddsSnapshots" :key="s.id">
-              <td>{{ formatSnapshotTime(s.capturedAt || s.captured_at) }}</td>
-              <td>{{ s.handicap ?? '-' }}</td>
-              <td>{{ fmtOdds(s.oddsNspfWin || s.odds_nspf_win) }}</td>
-              <td>{{ fmtOdds(s.oddsNspfDraw || s.odds_nspf_draw) }}</td>
-              <td>{{ fmtOdds(s.oddsNspfLose || s.odds_nspf_lose) }}</td>
-              <td>{{ s.source || '-' }}</td>
+            <tr v-for="row in snapshotRows" :key="row.id">
+              <td>{{ formatSnapshotTime(row.capturedAt) }}</td>
+              <td>{{ row.handicap ?? '-' }}</td>
+              <td>{{ fmtOdds(row.win) }}</td>
+              <td>{{ fmtOdds(row.draw) }}</td>
+              <td>{{ fmtOdds(row.lose) }}</td>
+              <td class="impl-cell">
+                <template v-if="row.implied">
+                  {{ pct1(row.implied.home) }} / {{ pct1(row.implied.draw) }} / {{ pct1(row.implied.away) }}
+                </template>
+                <template v-else>-</template>
+              </td>
+              <td class="vs-cell">
+                <template v-if="row.vs">
+                  <span :class="'level-' + row.vs.level">
+                    {{ row.vs.maxAbsDeltaPct.toFixed(1) }}pt
+                  </span>
+                  <span class="agree" :class="{ ok: row.vs.agreeTendency }">
+                    {{ row.vs.agreeTendency ? '同向' : '异向' }}
+                  </span>
+                </template>
+                <template v-else>-</template>
+              </td>
+              <td>{{ row.source || '-' }}</td>
             </tr>
           </tbody>
         </table>
@@ -69,21 +116,86 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import UpgradeHint from '@/components/UpgradeHint.vue'
-import { fmtOdds } from '@/utils/matchMeta'
+import { fmtOdds, impliedFromSp, compareImpliedToModel } from '@/utils/matchMeta'
 import {
   formatSnapshotTime,
   resultClass,
   resultText,
 } from './matchDetailFormat'
 
-defineProps({
+const props = defineProps({
   match: { type: Object, required: true },
   hasAnyOdds: { type: Boolean, default: false },
   handicapLabel: { type: [String, Number], default: '' },
   oddsSnapshots: { type: Array, default: () => [] },
   oddsSnapshotsLocked: { type: Boolean, default: false },
   headToHead: { type: Array, default: () => [] },
+})
+
+function modelProbs() {
+  const p = props.match?.prediction
+  if (!p) return null
+  const home = Number(p.homeWinProb)
+  const draw = Number(p.drawProb)
+  const away = Number(p.awayWinProb)
+  if (![home, draw, away].every((x) => Number.isFinite(x))) return null
+  return { home, draw, away }
+}
+
+function pct1(v) {
+  if (v == null || !Number.isFinite(Number(v))) return '-'
+  return `${(Number(v) * 100).toFixed(1)}%`
+}
+
+function signedPt(v) {
+  if (v == null || !Number.isFinite(Number(v))) return '-'
+  const pt = Number(v) * 100
+  const sign = pt > 0 ? '+' : ''
+  return `${sign}${pt.toFixed(1)}pt`
+}
+
+function deltaClass(v) {
+  if (v == null || !Number.isFinite(Number(v))) return ''
+  if (Number(v) > 0.01) return 'pos'
+  if (Number(v) < -0.01) return 'neg'
+  return ''
+}
+
+const modelCompare = computed(() => {
+  const model = modelProbs()
+  if (!model) return null
+  const m = props.match
+  const implied = impliedFromSp(m.oddsNspfWin, m.oddsNspfDraw, m.oddsNspfLose)
+    || impliedFromSp(m.oddsSpfWin, m.oddsSpfDraw, m.oddsSpfLose)
+  if (!implied) return null
+  return {
+    model,
+    implied,
+    vs: compareImpliedToModel(implied, model),
+  }
+})
+
+const snapshotRows = computed(() => {
+  const model = modelProbs()
+  return (props.oddsSnapshots || []).map((s) => {
+    const win = s.oddsNspfWin ?? s.odds_nspf_win
+    const draw = s.oddsNspfDraw ?? s.odds_nspf_draw
+    const lose = s.oddsNspfLose ?? s.odds_nspf_lose
+    const implied = impliedFromSp(win, draw, lose)
+    return {
+      id: s.id,
+      capturedAt: s.capturedAt || s.captured_at,
+      handicap: s.handicap,
+      win,
+      draw,
+      lose,
+      source: s.source,
+      implied,
+      vs: compareImpliedToModel(implied, model),
+    }
+  })
 })
 </script>
 
@@ -131,6 +243,49 @@ defineProps({
   color: var(--text-primary);
 }
 
+.model-compare-block {
+  margin: 8px 0 14px;
+  padding: 12px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+}
+
+.compare-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.compare-row {
+  display: grid;
+  grid-template-columns: 48px repeat(3, 1fr);
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.compare-row.deltas {
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+}
+
+.cmp-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.compare-row .pos { color: var(--color-orange); }
+.compare-row .neg { color: var(--color-blue); }
+
+.compare-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .odds-table-wrap {
   overflow-x: auto;
 }
@@ -159,6 +314,30 @@ defineProps({
 
 .player-stats-table tbody tr:hover {
   background: var(--bg-hover);
+}
+
+.impl-cell {
+  font-family: 'Consolas', monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.vs-cell {
+  white-space: nowrap;
+}
+
+.vs-cell .level-low { color: var(--color-blue); }
+.vs-cell .level-mid { color: var(--color-orange); }
+.vs-cell .level-high { color: var(--color-red); font-weight: 700; }
+
+.vs-cell .agree {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.vs-cell .agree.ok {
+  color: var(--color-blue);
 }
 
 .history-empty.soft {

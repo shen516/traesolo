@@ -259,6 +259,16 @@ async def get_odds_deviation_monitor(
     return odds_deviation_report(db, days=days, league_id=league_id)
 
 
+@router.get("/monitor/breakdown", dependencies=[RequireModelManage])
+async def get_accuracy_breakdown(
+    days: int = Query(60, ge=7, le=365),
+    db: Session = Depends(get_db),
+):
+    """分联赛 / 分玩法准确率（胜平负 · 比分 · 总进球），即时聚合。"""
+    from services.model_monitor_service import breakdown_report
+    return breakdown_report(db, days=days)
+
+
 @router.get("/train/status", dependencies=[RequireModelManage])
 async def get_training_status():
     status = training_service.get_training_status()
