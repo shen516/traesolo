@@ -1,5 +1,6 @@
 import '../api/match_api.dart';
 import '../models/match.dart';
+import '../models/odds_snapshot.dart';
 
 class MatchRepository {
   MatchRepository(this._api);
@@ -11,12 +12,14 @@ class MatchRepository {
     int pageSize = 20,
     String? leagueId,
     String? keyword,
+    String? matchDate,
   }) =>
       _api.getUpcoming(
         page: page,
         pageSize: pageSize,
         leagueId: leagueId,
         keyword: keyword,
+        matchDate: matchDate,
       );
 
   Future<MatchListPage> finished({
@@ -24,16 +27,24 @@ class MatchRepository {
     int pageSize = 20,
     String? leagueId,
     String? keyword,
+    String? matchDate,
   }) =>
       _api.getFinished(
         page: page,
         pageSize: pageSize,
         leagueId: leagueId,
         keyword: keyword,
+        matchDate: matchDate,
       );
 
   Future<MatchItem> detail(String id) => _api.getById(id);
 
   Future<PredictionSummary> prediction(String matchId) =>
       _api.getPrediction(matchId);
+
+  Future<List<OddsSnapshot>> oddsSnapshots(
+    String matchId, {
+    int limit = 30,
+  }) =>
+      _api.getOddsSnapshots(matchId, limit: limit);
 }

@@ -10,6 +10,7 @@ class StandingApi {
     String leagueId, {
     String? season,
     Map<String, String>? teamNames,
+    Map<String, String?>? teamLogos,
   }) async {
     final data = await _client.get<Map<String, dynamic>>(
       '/standings/league/$leagueId',
@@ -26,6 +27,7 @@ class StandingApi {
           (e) => StandingRow.fromJson(
             Map<String, dynamic>.from(e),
             teamNames: teamNames,
+            teamLogos: teamLogos,
           ),
         )
         .toList();

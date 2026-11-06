@@ -1,0 +1,36 @@
+# 开发用：把后端代码目录映射到宿主机，改代码无需重建镜像。
+# 用法（项目根目录）：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+# 仅重建/重启 API：
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d model-api rq-worker
+#
+# 说明：
+# - ./backend → 容器 /app（与 Dockerfile WORKDIR 一致）
+# - 匿名卷遮住宿主机 .venv，避免把 Windows 虚拟环境挂进 Linux 容器
+# - API 开 --reload，保存 .py 后自动重载（仍保持 workers=1）
+
+services:
+  model-api:
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /app/venv
+    command:
+      [
+        "uvicorn",
+        "main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--workers",
+        "1",
+        "--reload",
+      ]
+
+  rq-worker:
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /app/venv
+    # 代码已挂载；改 worker 逻辑后需：docker compose ... restart rq-worker

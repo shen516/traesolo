@@ -24,8 +24,14 @@ class DataRepository {
   final TeamRepository _teamRepository;
 
   Future<LeagueBoardData> board(String leagueId) async {
-    final names = await _teamRepository.nameMap(leagueId);
-    final standings = await _standingApi.byLeague(leagueId, teamNames: names);
+    final teams = await _teamRepository.byLeague(leagueId);
+    final names = {for (final t in teams) t.id: t.displayName};
+    final logos = {for (final t in teams) t.id: t.logo};
+    final standings = await _standingApi.byLeague(
+      leagueId,
+      teamNames: names,
+      teamLogos: logos,
+    );
     final scorers = await _scorerApi.byLeague(leagueId, teamNames: names);
     final season = standings.isNotEmpty
         ? standings.first.season

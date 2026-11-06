@@ -16,4 +16,11 @@ class TeamRepository {
       for (final t in teams) t.id: t.displayName,
     };
   }
+
+  Future<Map<String, String?>> logoMap(String leagueId) async {
+    final teams = await byLeague(leagueId);
+    return {
+      for (final t in teams) t.id: t.logo,
+    };
+  }
 }

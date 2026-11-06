@@ -91,12 +91,16 @@ class ApiClient {
     Object? data,
     Map<String, dynamic>? queryParameters,
     T Function(dynamic data)? parser,
+    Duration? receiveTimeout,
   }) async {
     try {
       final res = await _dio.post<dynamic>(
         path,
         data: data,
         queryParameters: queryParameters,
+        options: receiveTimeout == null
+            ? null
+            : Options(receiveTimeout: receiveTimeout),
       );
       final body = res.data;
       if (parser != null) return parser(body);

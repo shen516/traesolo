@@ -24,6 +24,13 @@ class TeamBrief {
   }
 
   String get displayName => (shortName != null && shortName!.isNotEmpty) ? shortName! : name;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        if (shortName != null) 'short_name': shortName,
+        if (logo != null) 'logo': logo,
+      };
 }
 
 class LeagueBrief {
@@ -50,6 +57,13 @@ class LeagueBrief {
       icon: json['icon']?.toString(),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        if (logo != null) 'logo': logo,
+        if (icon != null) 'icon': icon,
+      };
 }
 
 class PredictionSummary {
@@ -65,6 +79,9 @@ class PredictionSummary {
     this.modelVersion,
     this.analysis,
     this.altScores = const [],
+    this.primaryScenario,
+    this.scenarioReason,
+    this.scenarioLabel,
   });
 
   final String? mainScore;
@@ -78,6 +95,9 @@ class PredictionSummary {
   final String? modelVersion;
   final String? analysis;
   final List<String> altScores;
+  final String? primaryScenario;
+  final String? scenarioReason;
+  final String? scenarioLabel;
 
   factory PredictionSummary.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const PredictionSummary();
@@ -88,6 +108,16 @@ class PredictionSummary {
     }
 
     final alts = json['alt_scores'];
+    final primary = json['primary_scenario']?.toString();
+    String? label;
+    final scenarios = json['scenarios'];
+    if (primary != null && scenarios is Map) {
+      final pack = scenarios[primary];
+      if (pack is Map) {
+        label = pack['label']?.toString() ?? pack['name']?.toString();
+      }
+    }
+
     return PredictionSummary(
       mainScore: json['main_score']?.toString(),
       tendency: json['tendency']?.toString(),
@@ -100,10 +130,53 @@ class PredictionSummary {
       modelVersion: json['model_version']?.toString(),
       analysis: json['analysis']?.toString(),
       altScores: alts is List ? alts.map((e) => e.toString()).toList() : const [],
+      primaryScenario: primary,
+      scenarioReason: json['scenario_reason']?.toString(),
+      scenarioLabel: label,
     );
   }
 
   bool get hasProbs => homeWinProb != null || drawProb != null || awayWinProb != null;
+
+  bool get hasContent =>
+      hasProbs ||
+      (mainScore != null && mainScore!.isNotEmpty) ||
+      (analysis != null && analysis!.isNotEmpty);
+
+  String get scenarioTitle {
+    if (scenarioLabel != null && scenarioLabel!.isNotEmpty) return scenarioLabel!;
+    if (primaryScenario != null && primaryScenario!.isNotEmpty) {
+      return primaryScenario!;
+    }
+    return '';
+  }
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{
+      if (mainScore != null) 'main_score': mainScore,
+      if (tendency != null) 'tendency': tendency,
+      if (confidence != null) 'confidence': confidence,
+      if (riskLevel != null) 'risk_level': riskLevel,
+      if (homeWinProb != null) 'home_win_prob': homeWinProb,
+      if (drawProb != null) 'draw_prob': drawProb,
+      if (awayWinProb != null) 'away_win_prob': awayWinProb,
+      if (totalGoals != null) 'total_goals': totalGoals,
+      if (modelVersion != null) 'model_version': modelVersion,
+      if (analysis != null) 'analysis': analysis,
+      if (altScores.isNotEmpty) 'alt_scores': altScores,
+      if (primaryScenario != null) 'primary_scenario': primaryScenario,
+      if (scenarioReason != null) 'scenario_reason': scenarioReason,
+    };
+    if (primaryScenario != null &&
+        primaryScenario!.isNotEmpty &&
+        scenarioLabel != null &&
+        scenarioLabel!.isNotEmpty) {
+      map['scenarios'] = {
+        primaryScenario!: {'label': scenarioLabel},
+      };
+    }
+    return map;
+  }
 }
 
 class MatchItem {
@@ -119,6 +192,15 @@ class MatchItem {
     this.awayTeam = const TeamBrief(id: '', name: '-'),
     this.league = const LeagueBrief(id: '', name: '-'),
     this.prediction,
+    this.matchNo,
+    this.handicap,
+    this.oddsNspfWin,
+    this.oddsNspfDraw,
+    this.oddsNspfLose,
+    this.oddsSpfWin,
+    this.oddsSpfDraw,
+    this.oddsSpfLose,
+    this.isSingle = false,
   });
 
   final String id;
@@ -132,6 +214,15 @@ class MatchItem {
   final TeamBrief awayTeam;
   final LeagueBrief league;
   final PredictionSummary? prediction;
+  final String? matchNo;
+  final double? handicap;
+  final double? oddsNspfWin;
+  final double? oddsNspfDraw;
+  final double? oddsNspfLose;
+  final double? oddsSpfWin;
+  final double? oddsSpfDraw;
+  final double? oddsSpfLose;
+  final bool isSingle;
 
   factory MatchItem.fromJson(Map<String, dynamic> json) {
     int? asInt(dynamic v) {
@@ -139,6 +230,12 @@ class MatchItem {
       if (v is int) return v;
       if (v is num) return v.toInt();
       return int.tryParse(v.toString());
+    }
+
+    double? asDouble(dynamic v) {
+      if (v == null) return null;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString());
     }
 
     final pred = json['prediction'];
@@ -154,8 +251,20 @@ class MatchItem {
       awayTeam: TeamBrief.fromJson(json['away_team'] as Map<String, dynamic>?),
       league: LeagueBrief.fromJson(json['league'] as Map<String, dynamic>?),
       prediction: pred is Map<String, dynamic> ? PredictionSummary.fromJson(pred) : null,
+      matchNo: json['match_no']?.toString(),
+      handicap: asDouble(json['handicap'] ?? json['handicap_line']),
+      oddsNspfWin: asDouble(json['odds_nspf_win']),
+      oddsNspfDraw: asDouble(json['odds_nspf_draw']),
+      oddsNspfLose: asDouble(json['odds_nspf_lose']),
+      oddsSpfWin: asDouble(json['odds_spf_win']),
+      oddsSpfDraw: asDouble(json['odds_spf_draw']),
+      oddsSpfLose: asDouble(json['odds_spf_lose']),
+      isSingle: json['is_single'] == true,
     );
   }
+
+  bool get hasNspf =>
+      oddsNspfWin != null || oddsNspfDraw != null || oddsNspfLose != null;
 
   String get scoreText {
     if (homeGoals == null || awayGoals == null) return 'vs';
@@ -170,6 +279,34 @@ class MatchItem {
     if (d.isEmpty) return t;
     return '$d $t';
   }
+
+  static String formatOdds(double? v) {
+    if (v == null) return '-';
+    return v.toStringAsFixed(2);
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'status': status,
+        if (matchDate != null) 'match_date': matchDate,
+        if (matchTime != null) 'match_time': matchTime,
+        if (homeGoals != null) 'home_goals': homeGoals,
+        if (awayGoals != null) 'away_goals': awayGoals,
+        if (result != null) 'result': result,
+        'home_team': homeTeam.toJson(),
+        'away_team': awayTeam.toJson(),
+        'league': league.toJson(),
+        if (prediction != null) 'prediction': prediction!.toJson(),
+        if (matchNo != null) 'match_no': matchNo,
+        if (handicap != null) 'handicap': handicap,
+        if (oddsNspfWin != null) 'odds_nspf_win': oddsNspfWin,
+        if (oddsNspfDraw != null) 'odds_nspf_draw': oddsNspfDraw,
+        if (oddsNspfLose != null) 'odds_nspf_lose': oddsNspfLose,
+        if (oddsSpfWin != null) 'odds_spf_win': oddsSpfWin,
+        if (oddsSpfDraw != null) 'odds_spf_draw': oddsSpfDraw,
+        if (oddsSpfLose != null) 'odds_spf_lose': oddsSpfLose,
+        'is_single': isSingle,
+      };
 }
 
 class MatchListPage {
@@ -179,6 +316,9 @@ class MatchListPage {
     required this.pageSize,
     required this.total,
     required this.pages,
+    this.disclaimer,
+    this.availableDates = const [],
+    this.missingScoreTotal,
   });
 
   final List<MatchItem> matches;
@@ -186,10 +326,14 @@ class MatchListPage {
   final int pageSize;
   final int total;
   final int pages;
+  final String? disclaimer;
+  final List<String> availableDates;
+  final int? missingScoreTotal;
 
   factory MatchListPage.fromJson(Map<String, dynamic> json) {
     final list = json['matches'];
     final pagination = (json['pagination'] as Map<String, dynamic>?) ?? const {};
+    final dates = json['available_dates'];
     return MatchListPage(
       matches: list is List
           ? list
@@ -201,6 +345,11 @@ class MatchListPage {
       pageSize: (pagination['page_size'] as num?)?.toInt() ?? 20,
       total: (pagination['total'] as num?)?.toInt() ?? 0,
       pages: (pagination['pages'] as num?)?.toInt() ?? 0,
+      disclaimer: json['disclaimer']?.toString(),
+      availableDates: dates is List
+          ? dates.map((e) => e.toString()).toList()
+          : const [],
+      missingScoreTotal: (json['missing_score_total'] as num?)?.toInt(),
     );
   }
 }

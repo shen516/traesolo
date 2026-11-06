@@ -31,6 +31,23 @@ class AuthState {
   bool get isAuthenticated => token != null && token!.isNotEmpty;
   bool get mustChangePassword => user?.mustChangePassword == true;
 
+  /// 与后端 RequireSimulation 对齐：simulation:view 或 model:manage
+  bool get canSimulate =>
+      permissions.contains('simulation:view') ||
+      permissions.contains('model:manage');
+
+  /// 竞彩只读：与 Web Jingcai 页权限大致对齐（后端 RequireMatchRead 更宽）
+  bool get canJingcai =>
+      permissions.contains('match:jingcai_bf') ||
+      permissions.contains('match:jingcai_bf_history') ||
+      permissions.contains('match:upcoming') ||
+      permissions.contains('match:finished') ||
+      permissions.contains('match:manage') ||
+      permissions.contains('jingcai:manage');
+
+  /// 赔率快照：订阅权益 `odds:snapshot`
+  bool get canOddsSnapshot => features.contains('odds:snapshot');
+
   AuthState copyWith({
     bool? initialized,
     bool? isLoading,

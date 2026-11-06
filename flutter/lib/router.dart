@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'features/about/about_screen.dart';
 import 'features/auth/auth_state.dart';
 import 'features/auth/change_password_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/data/data_screen.dart';
 import 'features/home/home_screen.dart';
+import 'features/jingcai/jingcai_screen.dart';
 import 'features/match_detail/match_detail_screen.dart';
 import 'features/matches/matches_screen.dart';
 import 'features/profile/profile_screen.dart';
@@ -37,7 +39,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (auth.mustChangePassword) {
         return changingPwd ? null : '/change-password';
       }
-      if (loggingIn || changingPwd) {
+      if (loggingIn) {
         return '/home';
       }
       return null;
@@ -57,6 +59,20 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final id = state.pathParameters['id']!;
           return TeamDetailScreen(teamId: id);
+        },
+      ),
+      GoRoute(
+        path: '/about',
+        parentNavigatorKey: _rootKey,
+        builder: (context, state) => const AboutScreen(),
+      ),
+      // 深链 huange://open/match/{id} → /match/:id
+      GoRoute(
+        path: '/match/:id',
+        parentNavigatorKey: _rootKey,
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return MatchDetailScreen(matchId: id);
         },
       ),
       StatefulShellRoute.indexedStack(
@@ -96,6 +112,14 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/data',
                 builder: (context, state) => const DataScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/jingcai',
+                builder: (context, state) => const JingcaiScreen(),
               ),
             ],
           ),

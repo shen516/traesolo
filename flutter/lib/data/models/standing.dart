@@ -12,6 +12,7 @@ class StandingRow {
     this.points = 0,
     this.season,
     this.teamName,
+    this.teamLogo,
   });
 
   final String teamId;
@@ -26,6 +27,7 @@ class StandingRow {
   final int points;
   final String? season;
   final String? teamName;
+  final String? teamLogo;
 
   String get displayName =>
       (teamName != null && teamName!.isNotEmpty) ? teamName! : teamId;
@@ -33,6 +35,7 @@ class StandingRow {
   factory StandingRow.fromJson(
     Map<String, dynamic> json, {
     Map<String, String>? teamNames,
+    Map<String, String?>? teamLogos,
   }) {
     int asInt(dynamic v) {
       if (v == null) return 0;
@@ -55,6 +58,7 @@ class StandingRow {
       points: asInt(json['points']),
       season: json['season']?.toString(),
       teamName: teamNames?[teamId] ?? json['team_name']?.toString(),
+      teamLogo: teamLogos?[teamId] ?? json['team_logo']?.toString() ?? json['logo']?.toString(),
     );
   }
 }

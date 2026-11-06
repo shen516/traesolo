@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
@@ -48,6 +49,30 @@ class ProfileScreen extends ConsumerWidget {
                   ],
                 ],
               ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.lock_outline, color: AppColors.blue),
+                  title: const Text('修改密码'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/change-password'),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.info_outline, color: AppColors.gold),
+                  title: const Text('关于与免责声明'),
+                  subtitle: Text(
+                    '版本 ${AppConfig.appVersion}',
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => context.push('/about'),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 12),

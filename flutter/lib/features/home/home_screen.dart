@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
+import '../../widgets/team_logo.dart';
 import '../auth/auth_state.dart';
 import '../common/async_state_pane.dart';
 import '../data/data_screen.dart';
@@ -76,6 +77,15 @@ class HomeScreen extends ConsumerWidget {
                     color: AppColors.gold,
                     title: '数据',
                     onTap: () => context.go('/data'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _QuickTile(
+                    icon: Icons.analytics_outlined,
+                    color: AppColors.green,
+                    title: '竞彩',
+                    onTap: () => context.go('/jingcai'),
                   ),
                 ),
               ],
@@ -170,12 +180,38 @@ class HomeScreen extends ConsumerWidget {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Card(
                             child: ListTile(
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 6,
+                              ),
+                              leading: SizedBox(
+                                width: 56,
+                                child: Row(
+                                  children: [
+                                    TeamLogo(
+                                      url: m.homeTeam.logo,
+                                      size: 24,
+                                      semanticLabel:
+                                          '${m.homeTeam.displayName} 队徽',
+                                    ),
+                                    const SizedBox(width: 4),
+                                    TeamLogo(
+                                      url: m.awayTeam.logo,
+                                      size: 24,
+                                      semanticLabel:
+                                          '${m.awayTeam.displayName} 队徽',
+                                    ),
+                                  ],
+                                ),
+                              ),
                               title: Text(
                                 '${m.homeTeam.displayName} vs ${m.awayTeam.displayName}',
                               ),
                               subtitle: Text(
                                 '${m.league.name} · ${m.whenText}',
-                                style: const TextStyle(color: AppColors.textMuted),
+                                style: const TextStyle(
+                                  color: AppColors.textMuted,
+                                ),
                               ),
                               trailing: const Icon(Icons.chevron_right),
                               onTap: () => context.push('/matches/${m.id}'),

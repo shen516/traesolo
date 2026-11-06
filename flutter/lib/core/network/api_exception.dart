@@ -14,6 +14,7 @@ class ApiException implements Exception {
 
   bool get isUnauthorized => statusCode == 401;
   bool get isForbidden => statusCode == 403;
+  bool get isFeatureLocked => isForbidden && code == 'FEATURE_LOCKED';
 
   factory ApiException.fromResponse(int? statusCode, dynamic data) {
     final detail = data is Map ? data['detail'] : data;

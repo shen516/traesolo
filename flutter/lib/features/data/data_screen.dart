@@ -7,6 +7,7 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/league.dart';
 import '../../data/repositories/data_repository.dart';
+import '../../widgets/team_logo.dart';
 import '../common/async_state_pane.dart';
 import '../follows/follow_providers.dart';
 
@@ -258,56 +259,69 @@ class DataScreen extends ConsumerWidget {
                               );
                             }
                             final row = board.standings[index - 1];
-                            return InkWell(
-                              onTap: () => context.push('/teams/${row.teamId}'),
-                              child: Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 10),
-                                child: Row(
-                                  children: [
-                                    SizedBox(
-                                      width: 28,
-                                      child: Text(
-                                        '${row.rank}',
-                                        style: const TextStyle(
-                                          color: AppColors.textMuted,
+                            return Semantics(
+                              button: true,
+                              label:
+                                  '第 ${row.rank} 名 ${row.displayName}，${row.points} 分',
+                              child: InkWell(
+                                onTap: () =>
+                                    context.push('/teams/${row.teamId}'),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      SizedBox(
+                                        width: 28,
+                                        child: Text(
+                                          '${row.rank}',
+                                          style: const TextStyle(
+                                            color: AppColors.textMuted,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    Expanded(
-                                      child: Text(
-                                        row.displayName,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w600,
+                                      TeamLogo(
+                                        url: row.teamLogo,
+                                        size: 22,
+                                        semanticLabel: '${row.displayName} 队徽',
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          row.displayName,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                    SizedBox(
-                                      width: 28,
-                                      child: Text(
-                                        '${row.played}',
-                                        textAlign: TextAlign.right,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 36,
-                                      child: Text(
-                                        '${row.goalDiff}',
-                                        textAlign: TextAlign.right,
-                                      ),
-                                    ),
-                                    SizedBox(
-                                      width: 36,
-                                      child: Text(
-                                        '${row.points}',
-                                        textAlign: TextAlign.right,
-                                        style: const TextStyle(
-                                          color: AppColors.gold,
-                                          fontWeight: FontWeight.bold,
+                                      SizedBox(
+                                        width: 28,
+                                        child: Text(
+                                          '${row.played}',
+                                          textAlign: TextAlign.right,
                                         ),
                                       ),
-                                    ),
-                                  ],
+                                      SizedBox(
+                                        width: 36,
+                                        child: Text(
+                                          '${row.goalDiff}',
+                                          textAlign: TextAlign.right,
+                                        ),
+                                      ),
+                                      SizedBox(
+                                        width: 36,
+                                        child: Text(
+                                          '${row.points}',
+                                          textAlign: TextAlign.right,
+                                          style: const TextStyle(
+                                            color: AppColors.gold,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             );

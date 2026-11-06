@@ -33,31 +33,39 @@ flutter.sdk=D:\\programFiles\\desiger\\flutter
 ```powershell
 cd e:\fuye\traesolo\flutter
 & "D:\programFiles\desiger\flutter\bin\flutter.bat" pub get
-& "D:\programFiles\desiger\flutter\bin\flutter.bat" run
+& "D:\programFiles\desiger\flutter\bin\flutter.bat" run --dart-define=APP_ENV=dev --dart-define=API_BASE_URL=http://10.0.2.2:8000/api/v1
 ```
 
-### BaseUrl
+### 环境与 BaseUrl
 
-| 场景 | 命令 |
-|------|------|
-| Android 模拟器（默认） | 直接 `flutter run` → `http://10.0.2.2:8000/api/v1` |
-| 真机（示例） | `flutter run --dart-define=API_BASE_URL=http://192.168.1.8:8000/api/v1` |
+| 场景 | 命令要点 |
+|------|----------|
+| Android 模拟器 | `--dart-define=API_BASE_URL=http://10.0.2.2:8000/api/v1` |
+| 真机局域网 | `--dart-define=API_BASE_URL=http://192.168.x.x:8000/api/v1` |
+| 生产 release | `--release --dart-define=APP_ENV=prod --dart-define=API_BASE_URL=https://your.api/api/v1` |
 
-Debug 已允许 cleartext HTTP；生产请使用 HTTPS。
+- `APP_ENV`：`dev` / `staging` / `prod`（关于页展示）
+- Debug 清单允许 cleartext HTTP；**main/release 默认 `usesCleartextTraffic=false`**，生产必须 HTTPS
+- 正式签名：复制 `android/key.properties.example` → `android/key.properties` 后填写；未配置时 release 回退 debug 签名仅供联调
 
-若 Android 编译报 `this and base files have different roots`（Pub 在 C:、工程在 E:），工程已在 `android/gradle.properties` 关闭 Kotlin 增量编译。仍失败时可执行 `flutter clean` 后再 `flutter build apk --debug`。
+若 Android 编译报 `this and base files have different roots`（Pub 在 C:、工程在 E:），工程已在 `android/gradle.properties` 关闭 Kotlin 增量编译。仍失败时可执行 `flutter clean` 后再构建。
 
-## 功能（MVP）
+### 深链
 
-- 登录（PNG 验证码 hex 解码）
-- 强制改密拦截
-- 首页免责声明
-- 赛事未赛 / 已赛列表
-- 赛事详情 + 预测概率只读
-- 个人中心 / 退出登录
+自定义 Scheme：`huange://open/match/{id}` → App 内路由 `/match/:id`（需已登录）。
+
+## 功能（Phase 1～4 基线）
+
+- 登录（PNG 验证码 hex）/ 强制改密 / 个人中心 / 关于
+- 首页关注流、赛事筛选与分页加载更多
+- 赛事详情 + 预测只读 + 收藏 + 单场模拟 / λ 敏感性 / 赔率快照
+- 数据：联赛积分榜 / 射手榜 / 球队详情
+- 竞彩只读（在赛/历史）+ 分页
+- 赛事详情离线缓存（最近 20 场 / 24h；无网回退）
+- CI：`flutter analyze` + `flutter test`
 
 运维能力（采集、训练、权限、调度）请使用 Web 前端。
 
 ## 设计文档
 
-见 [docs/DESIGN.md](docs/DESIGN.md)。
+见 [docs/DESIGN.md](docs/DESIGN.md)；路线图见 `DOC/2026-11-06 欢哥竞球APP后续开发方案.md`。

@@ -4,17 +4,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/api/auth_api.dart';
 import '../data/api/favorite_api.dart';
 import '../data/api/follow_api.dart';
+import '../data/api/jingcai_api.dart';
 import '../data/api/league_api.dart';
 import '../data/api/match_api.dart';
 import '../data/api/scorer_api.dart';
+import '../data/api/simulation_api.dart';
 import '../data/api/standing_api.dart';
 import '../data/api/team_api.dart';
 import '../data/repositories/auth_repository.dart';
 import '../data/repositories/data_repository.dart';
 import '../data/repositories/favorite_repository.dart';
 import '../data/repositories/follow_repository.dart';
+import '../data/repositories/jingcai_repository.dart';
 import '../data/repositories/league_repository.dart';
+import '../data/match_detail_cache.dart';
 import '../data/repositories/match_repository.dart';
+import '../data/repositories/simulation_repository.dart';
 import '../data/repositories/team_repository.dart';
 import '../data/session_store.dart';
 import 'network/api_client.dart';
@@ -51,6 +56,10 @@ final matchRepositoryProvider = Provider<MatchRepository>((ref) {
   return MatchRepository(MatchApi(ref.watch(apiClientProvider)));
 });
 
+final matchDetailCacheProvider = Provider<MatchDetailCache>((ref) {
+  return MatchDetailCache();
+});
+
 final leagueRepositoryProvider = Provider<LeagueRepository>((ref) {
   return LeagueRepository(LeagueApi(ref.watch(apiClientProvider)));
 });
@@ -74,4 +83,12 @@ final followRepositoryProvider = Provider<FollowRepository>((ref) {
 
 final favoriteRepositoryProvider = Provider<FavoriteRepository>((ref) {
   return FavoriteRepository(FavoriteApi(ref.watch(apiClientProvider)));
+});
+
+final simulationRepositoryProvider = Provider<SimulationRepository>((ref) {
+  return SimulationRepository(SimulationApi(ref.watch(apiClientProvider)));
+});
+
+final jingcaiRepositoryProvider = Provider<JingcaiRepository>((ref) {
+  return JingcaiRepository(JingcaiApi(ref.watch(apiClientProvider)));
 });
