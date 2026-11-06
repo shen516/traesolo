@@ -1,6 +1,6 @@
 """数据库模型 - SQLAlchemy ORM"""
 from sqlalchemy import (
-    Column, String, Integer, DECIMAL, DATE, TIME, TEXT,
+    Column, String, Integer, BigInteger, DECIMAL, DATE, TIME, TEXT,
     TIMESTAMP, ForeignKey, UniqueConstraint, Index, Boolean,
     Enum
 )
@@ -303,6 +303,26 @@ class MatchPrediction(Base):
     updated_at = Column(TIMESTAMP, default=datetime.now, onupdate=datetime.now)
 
     match = relationship('Match', back_populates='predictions')
+
+
+class SimulationHistory(Base):
+    """模拟预测历史（参数 + 结果摘要）。仅回看用，非正式预测记录。"""
+    __tablename__ = 'simulation_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    match_id = Column(String(50), nullable=False)
+    match_name = Column(String(200))
+    simulations = Column(Integer)
+    seed = Column(BigInteger)
+    params_json = Column(TEXT)
+    summary_json = Column(TEXT)
+    elapsed_ms = Column(Integer)
+    created_at = Column(TIMESTAMP, default=datetime.now)
+
+    __table_args__ = (
+        Index('idx_sim_history_created', 'created_at'),
+        Index('idx_sim_history_match', 'match_id'),
+    )
 
 
 class User(Base):

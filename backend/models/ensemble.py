@@ -386,13 +386,23 @@ class EnsembleModel:
 
     def predict(self, home_team, away_team, *, home_params=None, away_params=None,
                 elo_home=None, elo_away=None, league_avg=None, weights=None, league_id=None,
-                weather=None, temperature=None, pitch_condition=None):
+                weather=None, temperature=None, pitch_condition=None,
+                lambda_override=None, xg_lambda_override=None,
+                poisson_home_advantage=None, simulations=None, seed=None,
+                max_goals=None, detailed_mc=False):
         """
         完整预测流程:
         1. 泊松  2. ELO  3. xG  4. 蒙特卡洛  5. 加权融合（权重归一化）
         home_params / away_params: {attack, defense, xg_for?, xg_against?, league, name?}
         weights / league_id: 优先显式权重，否则按联赛权重，再回退全局。
         weather / temperature / pitch_condition: 环境修正（作用于 λ 路径）。
+        模拟预测可选覆盖参数（默认 None 时行为与生产路径一致）：
+        - lambda_override: {"home": x, "away": y} 显式泊松 λ（环境修正仍生效）
+        - xg_lambda_override: {"home": x, "away": y} 显式 xG λ
+        - poisson_home_advantage: 覆盖主场优势系数
+        - simulations / seed: 蒙特卡洛次数与种子
+        - max_goals: 比分矩阵上限（detailed_mc 时生效）
+        - detailed_mc: True 时用 simulate_detailed 输出 mc_detailed
         """
         home = home_params or self._get_team_params(home_team)
         away = away_params or self._get_team_params(away_team)
@@ -403,16 +413,28 @@ class EnsembleModel:
 
         hp = self.get_hyperparams_for_league(lid)
         poisson_ha = float(hp.get("poisson_home_advantage", self.home_advantage))
+        if poisson_home_advantage is not None:
+            poisson_ha = float(poisson_home_advantage)
         elo_ha = float(hp.get("elo_home_advantage", self.elo.home_advantage))
 
-        lambda_home = self.poisson.calculate_lambda(
-            float(home["attack"]), float(away["defense"]), float(avg),
-            is_home=True, home_adv=poisson_ha,
-        )
-        lambda_away = self.poisson.calculate_lambda(
-            float(away["attack"]), float(home["defense"]), float(avg),
-            is_home=False, home_adv=poisson_ha,
-        )
+        if lambda_override and (lambda_override.get("home") or lambda_override.get("away")):
+            lambda_home = float(lambda_override.get("home") or 0) or self.poisson.calculate_lambda(
+                float(home["attack"]), float(away["defense"]), float(avg),
+                is_home=True, home_adv=poisson_ha,
+            )
+            lambda_away = float(lambda_override.get("away") or 0) or self.poisson.calculate_lambda(
+                float(away["attack"]), float(home["defense"]), float(avg),
+                is_home=False, home_adv=poisson_ha,
+            )
+        else:
+            lambda_home = self.poisson.calculate_lambda(
+                float(home["attack"]), float(away["defense"]), float(avg),
+                is_home=True, home_adv=poisson_ha,
+            )
+            lambda_away = self.poisson.calculate_lambda(
+                float(away["attack"]), float(home["defense"]), float(avg),
+                is_home=False, home_adv=poisson_ha,
+            )
 
         env_adjust = self._apply_environment(
             lambda_home, lambda_away,
@@ -445,6 +467,17 @@ class EnsembleModel:
             self.xg.home_advantage = old_xg_ha
 
         xg_coverage = float(xg_result.get("coverage") or 0)
+        # 显式 xG λ 覆盖：用泊松模型重建 xG 概率，coverage 标记为 1
+        if xg_lambda_override and (xg_lambda_override.get("home") or xg_lambda_override.get("away")):
+            xg_lh_o = float(xg_lambda_override.get("home") or 0) or float(xg_result.get("lambda_home") or 0)
+            xg_la_o = float(xg_lambda_override.get("away") or 0) or float(xg_result.get("lambda_away") or 0)
+            if xg_lh_o > 0 and xg_la_o > 0:
+                rebuilt = self.poisson.predict(xg_lh_o, xg_la_o)
+                rebuilt["lambda_home"] = xg_lh_o
+                rebuilt["lambda_away"] = xg_la_o
+                rebuilt["coverage"] = 1.0
+                xg_result = rebuilt
+                xg_coverage = 1.0
         # xG 路径同样套用环境系数，与泊松一致
         if abs(env_adjust["lambda_factor"] - 1.0) > 1e-6:
             xg_lh = float(xg_result.get("lambda_home") or 0) * env_adjust["lambda_factor"]
@@ -466,7 +499,28 @@ class EnsembleModel:
             mc_la = (1.0 - mc_blend) * float(lambda_away) + mc_blend * xg_la
         else:
             mc_lh, mc_la = float(lambda_home), float(lambda_away)
-        mc_result = self.monte_carlo.simulate(mc_lh, mc_la)
+        mc_detailed = None
+        if detailed_mc:
+            mc_detailed = self.monte_carlo.simulate_detailed(
+                mc_lh, mc_la,
+                simulations=simulations, seed=seed,
+                max_goals=max_goals if max_goals is not None else 8,
+            )
+            mc_result = {
+                "home_win_prob": mc_detailed["home_win_prob"],
+                "draw_prob": mc_detailed["draw_prob"],
+                "away_win_prob": mc_detailed["away_win_prob"],
+                "top_scores": [(t["score"], t["prob"]) for t in mc_detailed["top_scores"][:5]],
+                "total_goals_avg": mc_detailed["total_goals_avg"],
+                "total_goals_std": mc_detailed["total_goals_std"],
+            }
+        elif simulations is not None or seed is not None:
+            mc_result = MonteCarloSimulator(
+                simulations=int(simulations) if simulations else self.monte_carlo.simulations,
+                seed=seed,
+            ).simulate(mc_lh, mc_la)
+        else:
+            mc_result = self.monte_carlo.simulate(mc_lh, mc_la)
 
         if weights is not None:
             w = self._normalize_weights(weights)
@@ -478,6 +532,13 @@ class EnsembleModel:
             w = self._normalize_weights(self.weights)
             weight_source = "global"
 
+        warnings: list = []
+        # 显式权重被 MC 上下限约束调整时提示
+        if weights is not None:
+            raw_mc = float(weights.get("monte_carlo", 0) or 0)
+            if abs(raw_mc - w.get("monte_carlo", 0)) > 1e-6 and raw_mc > 0:
+                warnings.append("蒙特卡洛权重已按生产约束调整")
+
         # 双方都无 xG 样本时，把 xg 权重并入泊松，避免先验噪声
         if xg_coverage <= 0 and w.get("xg", 0) > 0:
             w = self._normalize_weights({
@@ -486,6 +547,7 @@ class EnsembleModel:
                 "xg": 0,
                 "monte_carlo": w.get("monte_carlo", 0),
             })
+            warnings.append("xG 样本不足，已将 xG 权重并入泊松路径")
 
         final_home_win = (
             w["poisson"] * poisson_result["home_win_prob"]
@@ -688,6 +750,30 @@ class EnsembleModel:
                 "weights_used": {k: round(v, 4) for k, v in w.items()},
                 "weight_source": weight_source,
             },
+            "components": {
+                "poisson": {
+                    "home_win_prob": round(float(poisson_result.get("home_win_prob") or 0), 4),
+                    "draw_prob": round(float(poisson_result.get("draw_prob") or 0), 4),
+                    "away_win_prob": round(float(poisson_result.get("away_win_prob") or 0), 4),
+                },
+                "elo": {
+                    "home_win_prob": round(float(elo_result.get("home_win_prob") or 0), 4),
+                    "draw_prob": round(float(elo_result.get("draw_prob") or 0), 4),
+                    "away_win_prob": round(float(elo_result.get("away_win_prob") or 0), 4),
+                },
+                "xg": {
+                    "home_win_prob": round(float(xg_result.get("home_win_prob") or 0), 4),
+                    "draw_prob": round(float(xg_result.get("draw_prob") or 0), 4),
+                    "away_win_prob": round(float(xg_result.get("away_win_prob") or 0), 4),
+                },
+                "monte_carlo": {
+                    "home_win_prob": round(float(mc_result.get("home_win_prob") or 0), 4),
+                    "draw_prob": round(float(mc_result.get("draw_prob") or 0), 4),
+                    "away_win_prob": round(float(mc_result.get("away_win_prob") or 0), 4),
+                },
+            },
+            "warnings": warnings,
+            "mc_detailed": mc_detailed,
         }
 
     def predict_from_db(self, db, home_team_id, away_team_id, match_id=None):
