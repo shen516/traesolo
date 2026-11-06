@@ -67,10 +67,12 @@ class DataScreen extends ConsumerWidget {
             );
           }
 
-          final selectedOk =
-              selectedId != null && leagues.any((l) => l.id == selectedId);
-          final effectiveId =
-              selectedOk ? selectedId as String : leagues.first.id;
+          final String effectiveId;
+          if (selectedId != null && leagues.any((l) => l.id == selectedId)) {
+            effectiveId = selectedId;
+          } else {
+            effectiveId = leagues.first.id;
+          }
           if (selectedId != effectiveId) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               ref.read(selectedLeagueIdProvider.notifier).setId(effectiveId);
