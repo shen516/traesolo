@@ -23,6 +23,10 @@ class TrainingAborted(Exception):
     """
 
 
+class TrainingUserDisabled(TrainingAborted):
+    """提交者账号在训练期间被禁用，应停止落库并标记取消。"""
+
+
 def _record_age_seconds(started, now: datetime) -> float:
     if started is None:
         return lock_settings()["stale_running_seconds"] + 1
@@ -199,6 +203,7 @@ class TrainingService:
                 self._report(message="持久化球队/联赛参数...", progress=70)
                 results["persist"] = self._persist_trained_params(db, results)
 
+                self._assert_runner_allowed(db)
                 self._report(message="训练融合模型（分联赛权重+主场超参）...", progress=80)
                 results["ensemble"] = self._train_ensemble_model(db, matches)
 
@@ -207,6 +212,7 @@ class TrainingService:
                     db, matches=matches, results=results, record_id=record_id,
                 )
 
+                self._assert_runner_allowed(db)
                 self._report(message="保存训练结果...", progress=95)
                 version = self._save_training_results(db, results, matches)
 
@@ -2102,7 +2108,7 @@ class TrainingService:
         if user is None:
             raise TrainingAborted("训练提交者账号已删除")
         if not user.is_active:
-            raise TrainingAborted("训练提交者账号已禁用")
+            raise TrainingUserDisabled("训练提交者账号已禁用")
 
     def get_training_status(self) -> dict:
         self.fail_abandoned_running_records()

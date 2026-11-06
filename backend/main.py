@@ -6,20 +6,24 @@ from pathlib import Path
 import logging
 import os
 
+# Windows + OpenBLAS：大规模蒙特卡洛（≥50k）多线程易触发 memory allocation 崩溃。
+# 仅在未显式配置时设默认值，不影响生产已调参场景。
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
 from services.app_log_service import setup_app_logging
 
 setup_app_logging()
 logger = logging.getLogger(__name__)
 
-from fastapi import FastAPI, HTTPException, Depends, Request
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-from services.ensemble_registry import get_ensemble, load_weights_from_db
+from services.ensemble_registry import load_weights_from_db
 import time
-import datetime
 from db.database import engine
 from db import models
 
@@ -30,6 +34,107 @@ ensure_schema()
 from init_db import init_database
 init_database()
 
+from api import router as api_router
+from services.scheduler_service import scheduler
+from services.crawler_service import crawler_service
+
+
+def run_initial_crawls():
+    """后台线程执行初始采集任务"""
+    import threading
+    def run():
+        try:
+            logger.info("Running initial match crawl...")
+            crawler_service.crawl_all_leagues()
+            logger.info("Initial match crawl completed")
+        except Exception as e:
+            logger.error(f"Initial match crawl failed: {e}")
+
+        try:
+            logger.info("Running initial league crawl...")
+            crawler_service.crawl_leagues(crawl_type='initial')
+            logger.info("Initial league crawl completed")
+        except Exception as e:
+            logger.error(f"Initial league crawl failed: {e}")
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+
+
+def _recover_stale_training():
+    """启动时把锁已释放、或超过僵死阈值仍为 running 的训练记录标为失败。"""
+    try:
+        from services.training_service import training_service
+        n = training_service.fail_abandoned_running_records(force=True)
+        if n:
+            logger.warning("Marked %s stale training record(s) as failed", n)
+    except Exception as e:
+        logger.warning("stale training recovery failed: %s", e)
+
+
+def _load_ensemble_weights():
+    load_weights_from_db()
+
+
+def _startup():
+    _recover_stale_training()
+    run_scheduler = os.environ.get("RUN_SCHEDULER", "1").lower() not in ("0", "false", "no")
+    if not run_scheduler:
+        logger.info("RUN_SCHEDULER=0 — skipping scheduler and initial crawls (API-only worker)")
+        _load_ensemble_weights()
+        return
+
+    logger.info("Starting scheduler service...")
+    # 仅真实采集；模拟爬虫已移除
+    if crawler_service._real_crawler:
+        crawler_service._default_crawler = crawler_service._real_crawler
+    logger.info("Real crawler ready")
+
+    from services.scheduled_tasks import register_all as register_scheduled_tasks
+
+    # 1. 注册所有任务的元信息（不启动，仅记录到内存注册表）
+    #    后续 enable/disable 通过 API 触发或从 DB 恢复
+    register_scheduled_tasks(scheduler, crawler_service)
+
+    # 2. 清理已下线的任务（如 player_crawl；不在注册表内的 DB 记录一并删除）
+    scheduler.cleanup_orphan_tasks()
+
+    # 4. 从数据库恢复任务状态：DB 中 is_enabled=True 的任务自动启动，False 的保持停止
+    scheduler.restore_from_db()
+
+    # 5. 启动调度器线程
+    scheduler.start()
+    logger.info("Scheduler started; task states restored from database")
+
+    # 5b. 从当前模型版本恢复全局/分联赛融合权重
+    _load_ensemble_weights()
+
+    # 6. 可选：启动时一次性初始采集（默认关闭，避免重启打爆源站/脏数据）
+    #    设置 TRAESOLO_INITIAL_CRAWL=1 开启
+    if os.environ.get("TRAESOLO_INITIAL_CRAWL", "").lower() in ("1", "true", "yes"):
+        run_initial_crawls()
+    else:
+        logger.info("TRAESOLO_INITIAL_CRAWL not set — skip startup crawl (use scheduled tasks)")
+
+
+def _shutdown():
+    try:
+        from services.training_service import training_service
+        training_service.abort_for_shutdown()
+    except Exception as e:
+        logger.warning("abort training on shutdown failed: %s", e)
+    logger.info("Stopping scheduler service...")
+    scheduler.stop()
+    logger.info("Scheduler stopped")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _startup()
+    yield
+    _shutdown()
+
+
 _docs_enabled = os.environ.get("TRAESOLO_DISABLE_DOCS", "").lower() not in ("1", "true", "yes")
 app = FastAPI(
     title="足球量化分析API",
@@ -37,13 +142,8 @@ app = FastAPI(
     docs_url="/docs" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
+    lifespan=lifespan,
 )
-
-from api import router as api_router
-from services.scheduler_service import scheduler
-from services.crawler_service import crawler_service
-
-ensemble = get_ensemble()
 
 app.include_router(api_router, prefix="/api/v1")
 
@@ -116,7 +216,7 @@ async def prometheus_metrics_middleware(request, call_next):
             elapsed * 1000,
         )
     except Exception:
-        pass
+        logger.warning("prometheus/access log failed", exc_info=True)
     return response
 
 
@@ -168,11 +268,6 @@ async def validation_exception_handler(request, exc: RequestValidationError):
     )
 
 
-class PredictRequest(BaseModel):
-    home_team: str
-    away_team: str
-
-
 @app.get("/")
 async def root():
     return {"status": "ok", "service": "football-quant-analysis", "version": "5.0.0"}
@@ -183,119 +278,6 @@ async def prometheus_metrics():
     from fastapi.responses import Response
     from services.metrics_service import metrics_content_type, metrics_payload
     return Response(metrics_payload(), media_type=metrics_content_type())
-
-
-from api.authz import RequirePredictionCalc
-
-@app.post("/api/v1/predict", dependencies=[RequirePredictionCalc])
-def predict(req: PredictRequest):
-    start = time.time()
-    if req.home_team == req.away_team:
-        raise HTTPException(status_code=400, detail="主客队不能相同")
-    try:
-        from db.database import SessionLocal
-        db = SessionLocal()
-        try:
-            result = ensemble.predict_from_db(db, req.home_team, req.away_team)
-        finally:
-            db.close()
-        result["elapsed_ms"] = round((time.time() - start) * 1000, 1)
-        result["timestamp"] = datetime.datetime.now().isoformat()
-        return result
-    except Exception:
-        logger.exception("predict failed: %s vs %s", req.home_team, req.away_team)
-        raise HTTPException(status_code=500, detail="预测失败")
-
-
-def run_initial_crawls():
-    """后台线程执行初始采集任务"""
-    import threading
-    def run():
-        try:
-            logger.info("Running initial match crawl...")
-            crawler_service.crawl_all_leagues()
-            logger.info("Initial match crawl completed")
-        except Exception as e:
-            logger.error(f"Initial match crawl failed: {e}")
-
-        try:
-            logger.info("Running initial league crawl...")
-            crawler_service.crawl_leagues(crawl_type='initial')
-            logger.info("Initial league crawl completed")
-        except Exception as e:
-            logger.error(f"Initial league crawl failed: {e}")
-    
-    thread = threading.Thread(target=run, daemon=True)
-    thread.start()
-
-
-def _recover_stale_training():
-    """启动时把锁已释放、或超过僵死阈值仍为 running 的训练记录标为失败。"""
-    try:
-        from services.training_service import training_service
-        n = training_service.fail_abandoned_running_records(force=True)
-        if n:
-            logger.warning("Marked %s stale training record(s) as failed", n)
-    except Exception as e:
-        logger.warning("stale training recovery failed: %s", e)
-
-
-@app.on_event("startup")
-async def startup_event():
-    _recover_stale_training()
-    run_scheduler = os.environ.get("RUN_SCHEDULER", "1").lower() not in ("0", "false", "no")
-    if not run_scheduler:
-        logger.info("RUN_SCHEDULER=0 — skipping scheduler and initial crawls (API-only worker)")
-        _load_ensemble_weights()
-        return
-
-    logger.info("Starting scheduler service...")
-    # 仅真实采集；模拟爬虫已移除
-    if crawler_service._real_crawler:
-        crawler_service._default_crawler = crawler_service._real_crawler
-    logger.info("Real crawler ready")
-
-    from services.scheduled_tasks import register_all as register_scheduled_tasks
-
-    # 1. 注册所有任务的元信息（不启动，仅记录到内存注册表）
-    #    后续 enable/disable 通过 API 触发或从 DB 恢复
-    register_scheduled_tasks(scheduler, crawler_service)
-
-    # 2. 清理已下线的任务（如 player_crawl；不在注册表内的 DB 记录一并删除）
-    scheduler.cleanup_orphan_tasks()
-
-    # 4. 从数据库恢复任务状态：DB 中 is_enabled=True 的任务自动启动，False 的保持停止
-    scheduler.restore_from_db()
-
-    # 5. 启动调度器线程
-    scheduler.start()
-    logger.info("Scheduler started; task states restored from database")
-
-    # 5b. 从当前模型版本恢复全局/分联赛融合权重
-    _load_ensemble_weights()
-
-    # 6. 可选：启动时一次性初始采集（默认关闭，避免重启打爆源站/脏数据）
-    #    设置 TRAESOLO_INITIAL_CRAWL=1 开启
-    if os.environ.get("TRAESOLO_INITIAL_CRAWL", "").lower() in ("1", "true", "yes"):
-        run_initial_crawls()
-    else:
-        logger.info("TRAESOLO_INITIAL_CRAWL not set — skip startup crawl (use scheduled tasks)")
-
-
-def _load_ensemble_weights():
-    load_weights_from_db()
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    try:
-        from services.training_service import training_service
-        training_service.abort_for_shutdown()
-    except Exception as e:
-        logger.warning("abort training on shutdown failed: %s", e)
-    logger.info("Stopping scheduler service...")
-    scheduler.stop()
-    logger.info("Scheduler stopped")
 
 
 if __name__ == "__main__":

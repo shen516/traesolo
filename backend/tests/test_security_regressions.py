@@ -324,6 +324,12 @@ def test_password_strength_reset_blocks_too_long(client: TestClient, regression_
 # ============================================================
 
 def test_predict_redacts_internal_error(client: TestClient, regression_ctx):
+    """孤儿 /predict 已删除；全局异常处理器不得把内部异常文本回给客户端。"""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from main import unhandled_exception_handler
+
     ctx = regression_ctx
     db = ctx["db"]
     admin = _set_auth(
@@ -333,22 +339,22 @@ def test_predict_redacts_internal_error(client: TestClient, regression_ctx):
     )
     headers, _ = _headers_for(client, admin)
 
-    import main as _main
-    orig = _main.ensemble.predict_from_db
-    def _boom(db, home, away):
-        raise RuntimeError("LEAK_ME_SECRET=abc")
-    _main.ensemble.predict_from_db = _boom
-    try:
-        r = client.post("/api/v1/predict", headers=headers,
-                        json={"home_team": "A", "away_team": "B"})
-        body = r.text
-        assert r.status_code == 500, f"/predict 应为 500，实际 {r.status_code}"
-        assert "预测失败" in body, f"脱敏文案缺失: {body[:200]}"
-        assert "LEAK_ME" not in body, "响应体泄漏内部异常文本"
-        assert "RuntimeError" not in body, "响应体泄漏异常类名"
-        assert "Traceback" not in body, "响应体泄漏堆栈"
-    finally:
-        _main.ensemble.predict_from_db = orig
+    gone = client.post(
+        "/api/v1/predict",
+        headers=headers,
+        json={"home_team": "A", "away_team": "B"},
+    )
+    assert gone.status_code == 404, f"孤儿 /predict 应已删除，实际 {gone.status_code}"
+
+    resp = asyncio.run(
+        unhandled_exception_handler(MagicMock(), RuntimeError("LEAK_ME_SECRET=abc"))
+    )
+    body = resp.body.decode("utf-8") if isinstance(resp.body, (bytes, bytearray)) else str(resp.body)
+    assert resp.status_code == 500
+    assert "服务内部错误" in body, f"脱敏文案缺失: {body[:200]}"
+    assert "LEAK_ME" not in body, "响应体泄漏内部异常文本"
+    assert "RuntimeError" not in body, "响应体泄漏异常类名"
+    assert "Traceback" not in body, "响应体泄漏堆栈"
 
 
 def test_runtime_log_api_redacts_internal_paths(client: TestClient, regression_ctx):

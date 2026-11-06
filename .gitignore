@@ -34,6 +34,17 @@ backend/static/media/**/*.webp
 *.sqlite
 *.sqlite3
 
+# ===== 一次性探针 / 临时脚本（勿入库） =====
+backend/_probe_*.py
+backend/_test_*.py
+backend/_*_check.py
+backend/_archive/
+check_*.py
+clean_*.py
+test_teams.py
+test_player_crawl.py
+run_wc_player_crawl.py
+
 # ===== 密钥文件 =====
 *.pem
 *.key

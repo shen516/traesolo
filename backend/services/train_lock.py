@@ -172,6 +172,17 @@ class TrainLock:
         self.write_status({"queued_user_id": uid, **extra})
         logger.info("Training queued for user %s", uid)
 
+    def get_queued_user(self) -> Optional[int]:
+        """读取训练提交者 user_id；无记录时返回 None。"""
+        info = self.read_status() or {}
+        uid = info.get("queued_user_id")
+        if uid is None:
+            return None
+        try:
+            return int(uid)
+        except (TypeError, ValueError):
+            return None
+
     def read_status(self) -> Optional[Dict[str, Any]]:
         client = get_redis_client()
         if client is not None:

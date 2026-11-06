@@ -9,12 +9,46 @@ logger = logging.getLogger(__name__)
 
 
 def run_training_job(start_date: str = None, end_date: str = None, lock_token: str = None) -> dict:
-    from services.training_service import training_service
+    from db.database import SessionLocal
+    from db.models import User
+    from services.train_lock import train_lock
+    from services.training_service import (
+        TrainingAborted,
+        TrainingUserDisabled,
+        training_service,
+    )
+
+    uid = train_lock.get_queued_user()
+    if uid is not None:
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.id == int(uid)).first()
+            if user is None:
+                msg = "训练提交者账号已删除"
+                logger.warning("RQ training cancelled: %s (user=%s)", msg, uid)
+                return {"status": "cancelled", "code": "TRAINING_ABORTED", "message": msg}
+            if not user.is_active:
+                msg = "训练提交者账号已禁用"
+                logger.warning("RQ training cancelled: %s (user=%s)", msg, uid)
+                return {
+                    "status": "cancelled",
+                    "code": "TRAINING_USER_DISABLED",
+                    "message": msg,
+                }
+        finally:
+            db.close()
 
     sd = date.fromisoformat(start_date) if start_date else None
     ed = date.fromisoformat(end_date) if end_date else None
     logger.info("RQ training job started: %s .. %s", start_date, end_date)
-    return training_service.train_all(start_date=sd, end_date=ed, lock_token=lock_token)
+    try:
+        return training_service.train_all(start_date=sd, end_date=ed, lock_token=lock_token)
+    except TrainingUserDisabled as e:
+        logger.warning("RQ training cancelled (user disabled): %s", e)
+        return {"status": "cancelled", "code": "TRAINING_USER_DISABLED", "message": str(e)}
+    except TrainingAborted as e:
+        logger.info("RQ training aborted: %s", e)
+        return {"status": "cancelled", "code": "TRAINING_ABORTED", "message": str(e)}
 
 
 def run_crawler_method(method_name: str, kwargs: dict = None) -> dict:

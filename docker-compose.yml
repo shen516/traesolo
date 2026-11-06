@@ -14,6 +14,8 @@ services:
       - TRAESOLO_INITIAL_CRAWL=0
       - DATABASE_URL=mysql+pymysql://football:football@mysql:3306/football_analytics
       - TRAESOLO_JSON_LOGS=1
+      - TRAESOLO_PRODUCTION=${TRAESOLO_PRODUCTION:-0}
+      - TRAESOLO_ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     depends_on:
       redis:
         condition: service_started

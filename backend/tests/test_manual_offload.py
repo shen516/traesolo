@@ -68,16 +68,18 @@ def test_crawler_method_coerces_date(monkeypatch):
 
 
 def test_batch_and_predict_are_sync_def():
+    """CPU 密集预测入口须为 sync def，才能进线程池不堵事件循环。
+
+    原 main.predict 孤儿路由已收编到 calculate_prediction。
+    """
     from api.matches import get_match_prediction
     from api.predictions import batch_calculate, calculate_prediction, recalculate_predictions
-    from main import predict
 
     for fn in (
         batch_calculate,
         recalculate_predictions,
         calculate_prediction,
         get_match_prediction,
-        predict,
     ):
         assert not inspect.iscoroutinefunction(fn)
 
