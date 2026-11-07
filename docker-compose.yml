@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   # ===== 模型API服务 =====
+  # 全容器（含 MySQL）：docker compose --profile bundled-db --env-file .env up -d --build
+  # 宿主机 MySQL + 代码挂载：用 docker-compose.host.yml（见该文件头注释）
   model-api:
     build: ./backend
     container_name: football-model-api
@@ -9,10 +11,11 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - REDIS_URL=redis://redis:6379/0
+      - OPENBLAS_NUM_THREADS=1
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_SCHEDULER=1
       - TRAESOLO_INITIAL_CRAWL=0
-      - DATABASE_URL=mysql+pymysql://football:football@mysql:3306/football_analytics
+      - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://football:football@mysql:3306/football_analytics}
       - TRAESOLO_JSON_LOGS=1
       - TRAESOLO_PRODUCTION=${TRAESOLO_PRODUCTION:-0}
       - TRAESOLO_ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
@@ -21,6 +24,7 @@ services:
         condition: service_started
       mysql:
         condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/live')"]
       interval: 30s
@@ -55,10 +59,11 @@ services:
     networks:
       - football-net
 
-  # ===== MySQL =====
+  # ===== MySQL（可选；线上库在宿主机时不要加 --profile bundled-db）=====
   mysql:
     image: mysql:8.0
     container_name: football-mysql
+    profiles: ["bundled-db"]
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: football_analytics
@@ -84,15 +89,17 @@ services:
     command: ["python", "worker.py"]
     environment:
       - PYTHONUNBUFFERED=1
-      - REDIS_URL=redis://redis:6379/0
+      - OPENBLAS_NUM_THREADS=1
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - RUN_SCHEDULER=0
-      - DATABASE_URL=mysql+pymysql://football:football@mysql:3306/football_analytics
+      - DATABASE_URL=${DATABASE_URL:-mysql+pymysql://football:football@mysql:3306/football_analytics}
       - TRAESOLO_JOB_QUEUE_ENABLED=1
     depends_on:
       redis:
         condition: service_started
       mysql:
         condition: service_healthy
+        required: false
     restart: always
     networks:
       - football-net
