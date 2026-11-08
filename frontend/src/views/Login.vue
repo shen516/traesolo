@@ -114,7 +114,15 @@ const refreshCaptcha = async () => {
     if (!hex || hex.length % 2 !== 0) {
       throw new Error('验证码数据格式错误')
     }
-    const bin = hex.match(/.{1,2}/g).map(h => String.fromCharCode(parseInt(h, 16))).join('')
+    // Uint8Array → base64，避免 Latin1/btoa 在部分浏览器下损坏 PNG
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+    }
+    let bin = ''
+    for (let i = 0; i < bytes.length; i++) {
+      bin += String.fromCharCode(bytes[i])
+    }
     captchaImage.value = `data:image/png;base64,${btoa(bin)}`
   } catch (_e) {
     errorMsg.value = '获取验证码失败，请检查后端服务'
@@ -348,6 +356,8 @@ onMounted(() => {
 .captcha-image img {
   width: 100%;
   height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
 .captcha-loading {

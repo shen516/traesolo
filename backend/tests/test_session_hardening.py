@@ -53,14 +53,12 @@ def test_bitfont_glyph_is_not_a_vertical_bar():
     )
 
 
-def test_captcha_visible_without_system_fonts(monkeypatch):
-    """Linux slim 常无 TTF：禁止依赖 Pillow load_default，必须点阵可读。"""
+def test_captcha_visible_without_system_fonts():
+    """Debian slim / 无字体环境：验证码固定点阵，必须肉眼可读。"""
     import struct
     import zlib
 
     import api.auth as auth_mod
-
-    monkeypatch.setattr(auth_mod, "_load_captcha_truetype", lambda size: None)
 
     raw = auth_mod.generate_captcha_image("H8KX", width=160, height=52)
     assert raw[:8] == b"\x89PNG\r\n\x1a\n"

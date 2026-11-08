@@ -103,15 +103,22 @@ def _png_from_rgb(buf: bytes, width: int, height: int) -> bytes:
 
 
 def _render_bitfont_glyph(text: str, x0: int, y_base: int, rotation: int, color, put, glyph_size: int):
-    """5x7 点阵放大渲染。字模字符串按逗号分行。"""
-    scale = max(2, glyph_size // 7)
+    """5x7 点阵放大渲染（Windows / Debian Docker 共用，不依赖系统字体）。"""
+    scale = max(3, glyph_size // 7)
     glyph = _BITFONT_5X7.get(text.upper())
     if not glyph:
         return
-    # 切勿直接 enumerate 整串：逗号会变成空行，字形塌成竖条（看起来像 I/!）
+    # 字模按逗号分行；切勿 enumerate 整串，否则字形塌成竖条
     rows = [row for row in glyph.split(",") if row]
     ca, sa = math.cos(math.radians(rotation)), math.sin(math.radians(rotation))
     cx, cy = x0 + 2 * scale, y_base + 3 * scale
+    outline = (245, 245, 250)
+
+    def plot(xi, yi, rgb, alpha=1.0):
+        xr = int(round(cx + (xi - cx) * ca - (yi - cy) * sa))
+        yr = int(round(cy + (xi - cx) * sa + (yi - cy) * ca))
+        put(xr, yr, rgb, alpha)
+
     for dy, row_bits in enumerate(rows):
         for dx, bit in enumerate(row_bits):
             if bit != "1":
@@ -119,56 +126,14 @@ def _render_bitfont_glyph(text: str, x0: int, y_base: int, rotation: int, color,
             for sy in range(scale):
                 for sx in range(scale):
                     xi, yi = x0 + dx * scale + sx, y_base + dy * scale + sy
-                    xr = int(round(cx + (xi - cx) * ca - (yi - cy) * sa))
-                    yr = int(round(cy + (xi - cx) * sa + (yi - cy) * ca))
-                    put(xr, yr, color, 1.0)
-
-
-_TTF_CANDIDATES = (
-    # Linux（需镜像内安装 fonts-dejavu-core 才有）
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    # Windows 开发机
-    "C:/Windows/Fonts/arialbd.ttf",
-    "C:/Windows/Fonts/arial.ttf",
-    "C:/Windows/Fonts/segoeui.ttf",
-)
-
-
-def _load_captcha_truetype(size: int):
-    """仅在真实 TTF 可用时返回字体；否则 None（禁止 load_default，Linux 无字体时会画成空白）。"""
-    try:
-        from PIL import ImageFont
-    except ImportError:
-        return None
-    for path in _TTF_CANDIDATES:
-        try:
-            return ImageFont.truetype(path, size)
-        except Exception:
-            continue
-    return None
+                    # 浅色描边，深色底上保证可读
+                    for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        plot(xi + ox, yi + oy, outline, 0.85)
+                    plot(xi, yi, color, 1.0)
 
 
 def _render_glyph(text: str, x0: int, y_base: int, rotation: int, color, put, glyph_size: int):
-    """渲染单字符：有可用 TTF 时用 Pillow；否则 5x7 点阵（Windows/Linux 一致可读）。"""
-    font = _load_captcha_truetype(glyph_size + 6)
-    if font is not None:
-        try:
-            from PIL import Image, ImageDraw
-            fs = max(24, glyph_size * 2)
-            img = Image.new("RGBA", (fs, fs), (0, 0, 0, 0))
-            ImageDraw.Draw(img).text((6, 2), text, fill=color + (255,), font=font)
-            img = img.rotate(rotation, resample=Image.BICUBIC, expand=False)
-            px = img.load()
-            for yy in range(fs):
-                for xx in range(fs):
-                    a = px[xx, yy][3]
-                    if a:
-                        put(x0 + xx - 6, y_base + yy - 2, color, a / 255.0)
-            return
-        except Exception:
-            pass
-
+    """验证码统一走内置点阵，避免 Debian slim / 无字体环境出现空白字。"""
     _render_bitfont_glyph(text, x0, y_base, rotation, color, put, glyph_size)
 
 
@@ -178,7 +143,7 @@ def generate_captcha_image(text, width=160, height=52):
     字符只以像素形式存在，响应体里不含任何明文文本，无法靠解析文档内容反推答案。
     旧实现是 SVG，字符直接写在 <text> 标签里，前端一次 fetch 就能读出答案。
     """
-    glyph_size = max(22, int(height * 0.62))
+    glyph_size = max(24, int(height * 0.66))
     buf = bytearray(width * height * 3)
     for i in range(width * height):
         buf[i * 3:i * 3 + 3] = _BG_RGB
@@ -204,26 +169,25 @@ def generate_captcha_image(text, width=160, height=52):
                 if dx * dx + dy * dy <= r * r:
                     put(x + dx, y + dy, color, alpha)
 
-    # 先画少量干扰，再画字符，避免噪点盖住字形（尤其 Linux 点阵路径）
-    for _ in range(4):
+    for _ in range(3):
         line(random.randint(0, width - 1), random.randint(0, height - 1),
              random.randint(0, width - 1), random.randint(0, height - 1),
-             random.choice(_TEXT_COLORS), 0.28)
-    for _ in range(36):
+             random.choice(_TEXT_COLORS), 0.22)
+    for _ in range(28):
         dot(random.randint(0, width - 1), random.randint(0, height - 1),
-            random.randint(1, 2), random.choice(_TEXT_COLORS), 0.4)
+            1, random.choice(_TEXT_COLORS), 0.35)
 
-    char_w = width / ((len(text) or 1) + 0.6)
-    scale = max(2, glyph_size // 7)
+    char_w = width / ((len(text) or 1) + 0.5)
+    scale = max(3, glyph_size // 7)
     glyph_h = 7 * scale
     for i, ch in enumerate(text):
-        x0 = int(char_w * (i + 0.35))
-        y_base = random.randint(4, max(5, height - glyph_h - 4))
-        _render_glyph(ch, x0, y_base, random.randint(-12, 12), random.choice(_TEXT_COLORS), put, glyph_size)
+        x0 = int(char_w * i + 6)
+        y_base = random.randint(3, max(4, height - glyph_h - 3))
+        _render_glyph(ch, x0, y_base, random.randint(-10, 10), random.choice(_TEXT_COLORS), put, glyph_size)
 
-    for _ in range(12):
+    for _ in range(8):
         dot(random.randint(0, width - 1), random.randint(0, height - 1),
-            1, random.choice(_TEXT_COLORS), 0.45)
+            1, random.choice(_TEXT_COLORS), 0.35)
 
     return _png_from_rgb(buf, width, height)
 
