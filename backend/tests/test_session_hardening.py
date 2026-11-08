@@ -53,6 +53,36 @@ def test_bitfont_glyph_is_not_a_vertical_bar():
     )
 
 
+def test_captcha_visible_without_system_fonts(monkeypatch):
+    """Linux slim 常无 TTF：禁止依赖 Pillow load_default，必须点阵可读。"""
+    import struct
+    import zlib
+
+    import api.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_load_captcha_truetype", lambda size: None)
+
+    raw = auth_mod.generate_captcha_image("H8KX", width=160, height=52)
+    assert raw[:8] == b"\x89PNG\r\n\x1a\n"
+    # IHDR + decompress IDAT → RGB，非背景像素应明显多于「仅噪点」
+    name_offset = raw.index(b"IDAT")
+    idat_len = struct.unpack(">I", raw[name_offset - 4: name_offset])[0]
+    decompressed = zlib.decompress(raw[name_offset + 4: name_offset + 4 + idat_len])
+    width, height = 160, 52
+    bg = auth_mod._BG_RGB
+    painted = 0
+    xs = []
+    for y in range(height):
+        row = decompressed[y * (width * 3 + 1) + 1: y * (width * 3 + 1) + 1 + width * 3]
+        for x in range(width):
+            pix = (row[x * 3], row[x * 3 + 1], row[x * 3 + 2])
+            if pix != bg:
+                painted += 1
+                xs.append(x)
+    assert painted >= 200, f"too few painted pixels ({painted}); glyphs likely missing"
+    assert xs and max(xs) - min(xs) >= 80, "glyphs not spanning captcha width"
+
+
 def test_captcha_is_png_and_answer_is_not_plaintext(client):
     """Captcha must be a PNG bitmap; the answer must not appear in the image bytes.
 

@@ -2,10 +2,34 @@
 #
 # 适用路径：/u01/app/traesolo
 #
-# 1) 停旧 systemd：systemctl stop traesolo-api && systemctl disable traesolo-api
-# 2) 后端：
+# —— 首次部署 ——
+# 1) 停旧 systemd（若曾用裸机 uvicorn）：
+#      systemctl stop traesolo-api && systemctl disable traesolo-api
+#      ss -lntp | grep ':8000'   # 确认 8000 已空闲
+# 2) 复制环境变量并按线上实际修改（库名/账号/密码）：
+#      cp .env.production.example .env && chmod 600 .env
+#      # 必改：ADMIN_PASSWORD（禁止 admin123）、DATABASE_URL（库名按实际，如 football）
+# 3) 启动后端：
 #      docker compose -f docker-compose.host.yml --env-file .env up -d --build
-# 3) 前端：见 frontend/nginx.host-dist.conf 头注释（npm run build + 本机 nginx）
+# 4) 前端：见 frontend/nginx.host-dist.conf 头注释
+#      （npm run build + 宿主机 Nginx 反代 http://127.0.0.1:8000，勿用 host.docker.internal）
+#
+# —— 后续更新应用 ——
+# A) 仅后端业务代码（./backend 已挂载）：
+#      git pull
+#      docker compose -f docker-compose.host.yml --env-file .env restart model-api rq-worker
+# B) 依赖变更（backend/requirements.txt / Dockerfile）：
+#      git pull
+#      docker compose -f docker-compose.host.yml --env-file .env up -d --build --force-recreate model-api rq-worker
+# C) 仅改 .env：
+#      docker compose -f docker-compose.host.yml --env-file .env up -d --force-recreate model-api rq-worker
+# D) 前端：
+#      cd frontend && npm ci && npm run build && sudo nginx -t && sudo systemctl reload nginx
+#
+# 验收：
+#   docker ps
+#   curl -sS http://127.0.0.1:8000/api/v1/health/live
+#   docker logs --tail=80 football-model-api
 
 services:
   model-api:

@@ -1,7 +1,8 @@
 # 阿里云 Linux 部署环境与命令
 
 > 适用：Alibaba Cloud Linux 2 / 3（及兼容的 CentOS / Anolis）部署 **traesolo**（足球纯竞技量化分析工具）。  
-> 推荐方式：**主机只装 Docker + Docker Compose**，业务（前端 Nginx、FastAPI、MySQL、Redis、RQ Worker）全部走 `docker-compose.yml`。  
+> **线上推荐（已有宿主机 MariaDB/Redis）**：`docker-compose.host.yml` + 根目录 `.env` + 宿主机 Nginx 托管 `frontend/dist`（路径示例 `/u01/app/traesolo`）。  
+> **全容器备选**：`docker-compose.yml`（可加 `--profile bundled-db` 起内置 MySQL）。  
 > **声明**：本工具仅供学习、研究与数据分析；生产请改默认密码并限制安全组。
 
 ---
@@ -130,61 +131,151 @@ sudo firewall-cmd --reload
 
 同时务必在 **阿里云安全组** 放行对应端口。
 
-### 3.5 拉取代码并启动
+### 3.5 线上推荐：宿主机库 + `docker-compose.host.yml`
+
+适用：MariaDB/MySQL、Redis 已在宿主机；后端用 Docker（`network_mode: host`）；前端用宿主机 Nginx 托管 `frontend/dist`。  
+默认路径：`/u01/app/traesolo`（可改，全文路径一并替换）。
+
+#### 3.5.1 首次部署
 
 ```bash
-# 换成你的仓库地址
-cd /opt
-sudo mkdir -p /opt/traesolo
-sudo chown $USER:$USER /opt/traesolo
-git clone <YOUR_REPO_URL> /opt/traesolo
-cd /opt/traesolo
+cd /u01/app/traesolo   # 或 git clone 到此目录
 
-# 生产务必改密码：编辑 docker-compose.yml 中 MYSQL_* 与 DATABASE_URL
-# 或使用环境变量覆盖（推荐后续改成 .env，勿把真实密码提交 Git）
+# 1) 停旧裸机 API，避免抢 8000（host 网络与宿主机共用端口）
+sudo systemctl stop traesolo-api 2>/dev/null || true
+sudo systemctl disable traesolo-api 2>/dev/null || true
+ss -lntp | grep ':8000' || echo '8000 free'
 
-docker compose build
-docker compose up -d
+# 2) 创建 .env（勿提交 Git）
+cp .env.production.example .env
+chmod 600 .env
+# 编辑 .env，至少改：
+#   ADMIN_PASSWORD=强密码（禁止 admin123；Compose 映射为 TRAESOLO_ADMIN_PASSWORD）
+#   DATABASE_URL=mysql+pymysql://用户:密码@127.0.0.1:3306/实际库名
+#   REDIS_URL=redis://127.0.0.1:6379/0
+# 密码含 @ 等特殊字符须 URL 编码（@ → %40）
+
+# 3) 确认库账号对「实际库名」有权限（库名不对会报 1044）
+mysql -ufootball -p -h127.0.0.1 -e "USE 你的库名; SELECT DATABASE();"
+
+# 4) 启动后端（model-api + rq-worker）
+docker compose -f docker-compose.host.yml --env-file .env up -d --build
+docker ps
+docker logs --tail=80 football-model-api
+
+# 5) 前端：构建 + 宿主机 Nginx（反代 127.0.0.1:8000，见 nginx.host-dist.conf）
+cd frontend && npm ci && npm run build && cd ..
+sudo cp frontend/nginx.host-dist.conf /etc/nginx/conf.d/traesolo.conf
+# 或 sites-available/enabled 方式，见该 conf 头注释
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+#### 3.5.2 验证
+
+```bash
+curl -sS http://127.0.0.1:8000/api/v1/health/live
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1/api/v1/health/live
+docker inspect football-model-api --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -E 'DATABASE_URL|TRAESOLO_'
+```
+
+浏览器：`http://<ECS公网IP>/`。登录账号默认 `admin`，密码为 `.env` 中 `ADMIN_PASSWORD`。
+
+#### 3.5.3 后续更新应用（日常发布）
+
+| 变更类型 | 命令 |
+|----------|------|
+| 仅后端 Python 业务代码 | `git pull` → `docker compose -f docker-compose.host.yml --env-file .env restart model-api rq-worker` |
+| `requirements.txt` / Dockerfile | `git pull` → `... up -d --build --force-recreate model-api rq-worker` |
+| 仅改 `.env` | `... up -d --force-recreate model-api rq-worker`（必须 recreate，restart 不会重读环境变量） |
+| 仅前端 | `cd frontend && npm ci && npm run build` → `sudo nginx -t && sudo systemctl reload nginx` |
+| 前后端一起 | 先后端（按上表选 restart 或 build），再前端 build + reload nginx |
+
+一键示例（依赖有变更时用 build；纯代码用 restart）：
+
+```bash
+cd /u01/app/traesolo
+git pull
+
+# 依赖变更：
+docker compose -f docker-compose.host.yml --env-file .env up -d --build --force-recreate model-api rq-worker
+
+# 仅代码、依赖未变：
+# docker compose -f docker-compose.host.yml --env-file .env restart model-api rq-worker
+
+cd frontend && npm ci && npm run build && cd ..
+sudo nginx -t && sudo systemctl reload nginx
+
+docker ps
+curl -sS http://127.0.0.1:8000/api/v1/health/live
+docker logs --tail=40 football-model-api
+```
+
+说明：`docker-compose.host.yml` 将 `./backend` 挂到容器 `/app`，**业务 .py 改完需 restart 才会被 uvicorn 加载**；`pip` 依赖在镜像层，改 `requirements.txt` 必须 `--build`。
+
+#### 3.5.4 常见故障
+
+| 现象 | 处理 |
+|------|------|
+| `1044 Access denied ... to database 'xxx'` | `.env` 的 `DATABASE_URL` 库名与线上一致；`GRANT` 对应用户 |
+| `TRAESOLO_ADMIN_PASSWORD` / 弱口令拒绝启动 | `.env` 设非 `admin123` 的 `ADMIN_PASSWORD` 后 `--force-recreate` |
+| `address already in use ... 8000` | 停 `traesolo-api` 或其它占用进程：`ss -lntp \| grep 8000` |
+| `No module named 'requests'` 等 | `requirements.txt` 已含依赖后 `--build` 重建镜像 |
+| 验证码竖条 / 只有噪点无字符 | 同步最新 `api/auth.py`（点阵分行 + 无 TTF 时禁止 Pillow `load_default`）后 `restart model-api`；slim 镜像无系统字体属正常 |
+| Nginx 反代不通 | 宿主机 Nginx 用 `127.0.0.1:8000`（`nginx.host-dist.conf`），不要用 `host.docker.internal` |
+
+### 3.6 备选：全容器 `docker-compose.yml`
+
+MySQL/Redis 也跑在 Compose 内时用此路径（可加 `--profile bundled-db`）。
+
+```bash
+cd /opt/traesolo   # 或你的仓库路径
+cp .env.production.example .env && chmod 600 .env
+# 编辑 DATABASE_URL / ADMIN_PASSWORD；bundled-db 时库主机名多为 mysql
+
+docker compose --profile bundled-db --env-file .env up -d --build
 docker compose ps
 ```
 
-### 3.6 验证
+验证：
 
 ```bash
-# 后端存活
 curl -sS http://127.0.0.1:8000/api/v1/health/live
-
-# 经前端 Nginx 反代
 curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1/
-
-# 日志
-docker compose logs -f model-api
+docker compose logs -f --tail=200 model-api
 ```
 
-浏览器访问：`http://<ECS公网IP>/`  
-API 文档（若未关）：`http://<ECS公网IP>:8000/docs`（建议仅内网或加鉴权/关公网 8000）。
+浏览器访问：`http://<ECS公网IP>/`。
 
 ### 3.7 常用运维命令
 
+**host 模式（线上推荐）：**
+
+```bash
+cd /u01/app/traesolo
+docker compose -f docker-compose.host.yml --env-file .env ps
+docker logs -f --tail=200 football-model-api
+docker compose -f docker-compose.host.yml --env-file .env restart model-api
+docker compose -f docker-compose.host.yml --env-file .env up -d --build --force-recreate model-api rq-worker
+```
+
+**全容器模式：**
+
 ```bash
 cd /opt/traesolo
-
 docker compose ps
 docker compose logs -f --tail=200 model-api
-docker compose logs -f --tail=200 frontend
 docker compose restart model-api
-docker compose down
-docker compose up -d --build          # 代码更新后重建并启动
-docker compose exec model-api bash    # 进后端容器（镜像含 bash 时）
+docker compose up -d --build
 ```
 
 ### 3.8 生产注意（必做）
 
-1. 修改 `docker-compose.yml` 默认账号密码：`root` / `football` / `football`。  
-2. 安全组 **不要** 对 `0.0.0.0/0` 开放 3306、6379。  
-3. 登录后立即改管理员默认口令（见 `DOC/功能分析.md` / 初始化说明）。  
-4. 单机 `model-api` 保持 `--workers 1`（镜像已如此），避免调度/训练状态冲突。  
-5. 可选：前面加 SLB + HTTPS 证书，ECS 只开 80/443。
+1. **必须有根目录 `.env`**（从 `.env.production.example` 复制），`chmod 600`；勿把真实密码提交 Git。  
+2. `TRAESOLO_PRODUCTION=1` 时 `ADMIN_PASSWORD` 禁止为 `admin123`。  
+3. `DATABASE_URL` 库名、账号与线上 MariaDB 一致；密码特殊字符做 URL 编码。  
+4. 安全组 **不要** 对 `0.0.0.0/0` 开放 3306、6379。  
+5. 单机 `model-api` 保持 `--workers 1`（镜像已如此），避免调度/训练状态冲突。  
+6. 可选：前面加 SLB + HTTPS 证书，ECS 只开 80/443。
 
 ---
 
@@ -286,16 +377,20 @@ sudo systemctl enable --now redis
 
 ## 5. 环境变量速查（Docker / 裸机通用）
 
+写入项目根 `.env`，由 `--env-file .env` 注入（host 模式必填，勿依赖空环境）。
+
 | 变量 | 含义 |
 |------|------|
-| `DATABASE_URL` | 如 `mysql+pymysql://football:密码@主机:3306/football_analytics` |
-| `REDIS_URL` | 如 `redis://redis:6379/0`（Compose 内网主机名 `redis`） |
+| `DATABASE_URL` | 如 `mysql+pymysql://football:密码@127.0.0.1:3306/football`（**库名按线上实际**） |
+| `REDIS_URL` | host 模式：`redis://127.0.0.1:6379/0`；全容器：`redis://redis:6379/0` |
+| `TRAESOLO_PRODUCTION` | 生产设 `1` |
+| `ADMIN_PASSWORD` | 生产管理员口令；Compose 映射为 `TRAESOLO_ADMIN_PASSWORD`（禁止 `admin123`） |
 | `RUN_SCHEDULER` | `1` 开定时采集；多实例时仅一台为 `1` |
 | `TRAESOLO_INITIAL_CRAWL` | 启动时是否全量采集，生产建议 `0` |
-| `TRAESOLO_JOB_QUEUE_ENABLED` | RQ 队列，Compose 中 worker 为 `1` |
+| `TRAESOLO_JOB_QUEUE_ENABLED` | RQ 队列，worker 为 `1` |
 | `TRAESOLO_JSON_LOGS` | JSON 日志 |
 
-Compose 内已写默认值；改密码后务必同步改 `DATABASE_URL`。
+改密码或库名后务必同步改 `DATABASE_URL`，并对容器 `--force-recreate`。
 
 ---
 
@@ -327,7 +422,9 @@ docker version
 docker compose version || docker-compose version || true
 
 echo "主机 Docker 环境就绪。请重新登录 SSH 后："
-echo "  cd /opt/traesolo && docker compose up -d --build"
+echo "  cd /u01/app/traesolo"
+echo "  cp .env.production.example .env && chmod 600 .env   # 再编辑"
+echo "  docker compose -f docker-compose.host.yml --env-file .env up -d --build"
 ```
 
 ```bash
@@ -339,18 +436,29 @@ sudo bash /opt/install-traesolo-host.sh
 
 ## 7. 验收清单
 
-- [ ] `docker compose ps` 中 `mysql` healthy，`model-api` healthy，`frontend` Up  
-- [ ] `curl` 本机 80 / health/live 成功  
+**host 模式（推荐）：**
+
+- [ ] 根目录存在 `.env`（`chmod 600`），`DATABASE_URL` / `ADMIN_PASSWORD` 已按线上填写  
+- [ ] `docker ps` 中 `football-model-api`、`football-rq-worker` 为 Up（api 随后 healthy）  
+- [ ] `curl http://127.0.0.1:8000/api/v1/health/live` 成功  
+- [ ] 宿主机 Nginx 反代 `127.0.0.1:8000`，`/` 与 `/api/` 可访问  
 - [ ] 安全组已放行 80，未对公网放行 3306/6379  
-- [ ] 已修改 MySQL 与系统管理员默认密码  
-- [ ] 浏览器能打开登录页并完成登录  
+- [ ] 浏览器能打开登录页并完成登录；验证码为清晰字母数字  
+
+**全容器模式：**
+
+- [ ] `docker compose ps` 中相关服务 Up / healthy  
+- [ ] `curl` 本机 80 / health/live 成功  
 
 ---
 
 ## 8. 相关文档
 
 - `DOC/部署与工作流文档.md` — 通用部署与工作流  
-- `docker-compose.yml` — 当前编排权威配置  
+- `docker-compose.host.yml` — **线上 host 网络编排（权威）**  
+- `docker-compose.yml` — 全容器编排  
+- `.env.production.example` — 生产环境变量模板  
+- `frontend/nginx.host-dist.conf` — 宿主机 Nginx 站点示例  
 - `DOC/功能分析.md` — 端口、架构与运维注意  
 
-*若与仓库代码冲突，以当前 `docker-compose.yml` / Dockerfile 为准。*
+*若与仓库代码冲突，以当前 `docker-compose.host.yml` / `docker-compose.yml` / Dockerfile 为准。*

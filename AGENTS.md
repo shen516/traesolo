@@ -18,7 +18,8 @@
 | 前端 lint | `cd frontend` → `npm run lint`（`lint:fix` 自动修复；日常上限 `--max-warnings 50`；CI 用 `lint:ci` 要求 0 warning） |
 | 前端单测 | `cd frontend` → `npm run test:unit`（Vitest，纯逻辑模块） |
 | 前端构建 | `cd frontend` → `npm run build` |
-| Docker 部署 | 根目录 `docker compose up -d --build`（API 8000 / 前端 80 / redis / mysql / rq-worker） |
+| Docker 部署（全容器） | 根目录 `docker compose up -d --build`（API 8000 / 前端 80 / redis / mysql / rq-worker） |
+| 线上 host 模式 | `docker compose -f docker-compose.host.yml --env-file .env up -d --build`；后续更新见 `DOC/阿里云Linux部署环境与命令.md` §3.5.3 |
 
 > 注意：`DOC/` 历史文档中出现的 `pytest -X utf8` 参数在当前环境已失效（报 unrecognized arguments），勿再使用。
 
