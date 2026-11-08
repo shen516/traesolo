@@ -58,6 +58,7 @@ _BITFONT_5X7 = {
     'W': "10001,10001,10001,10101,10101,11011,10001",
     'X': "10001,10001,01010,00100,01010,10001,10001",
     'Y': "10001,10001,01010,00100,00100,00100,00100",
+    'Z': "11111,00001,00010,00100,01000,10000,11111",
 }
 
 # 背景色与配色（深色主题一致）
@@ -101,6 +102,28 @@ def _png_from_rgb(buf: bytes, width: int, height: int) -> bytes:
     )
 
 
+def _render_bitfont_glyph(text: str, x0: int, y_base: int, rotation: int, color, put, glyph_size: int):
+    """5x7 点阵放大渲染。字模字符串按逗号分行。"""
+    scale = max(2, glyph_size // 7)
+    glyph = _BITFONT_5X7.get(text.upper())
+    if not glyph:
+        return
+    # 切勿直接 enumerate 整串：逗号会变成空行，字形塌成竖条（看起来像 I/!）
+    rows = [row for row in glyph.split(",") if row]
+    ca, sa = math.cos(math.radians(rotation)), math.sin(math.radians(rotation))
+    cx, cy = x0 + 2 * scale, y_base + 3 * scale
+    for dy, row_bits in enumerate(rows):
+        for dx, bit in enumerate(row_bits):
+            if bit != "1":
+                continue
+            for sy in range(scale):
+                for sx in range(scale):
+                    xi, yi = x0 + dx * scale + sx, y_base + dy * scale + sy
+                    xr = int(round(cx + (xi - cx) * ca - (yi - cy) * sa))
+                    yr = int(round(cy + (xi - cx) * sa + (yi - cy) * ca))
+                    put(xr, yr, color, 1.0)
+
+
 def _render_glyph(text: str, x0: int, y_base: int, rotation: int, color, put, glyph_size: int):
     """渲染单字符：有 Pillow 用抗锯齿真字形，否则用 5x7 点阵放大 + 整数旋转。"""
     try:
@@ -123,22 +146,7 @@ def _render_glyph(text: str, x0: int, y_base: int, rotation: int, color, put, gl
     except ImportError:
         pass
 
-    scale = max(2, glyph_size // 7)
-    rows = _BITFONT_5X7.get(text.upper())
-    if not rows:
-        return
-    ca, sa = math.cos(math.radians(rotation)), math.sin(math.radians(rotation))
-    cx, cy = x0 + 2 * scale, y_base + 3 * scale
-    for dy, row_bits in enumerate(rows):
-        for dx, bit in enumerate(row_bits):
-            if bit != '1':
-                continue
-            for sy in range(scale):
-                for sx in range(scale):
-                    xi, yi = x0 + dx * scale + sx, y_base + dy * scale + sy
-                    xr = int(round(cx + (xi - cx) * ca - (yi - cy) * sa))
-                    yr = int(round(cy + (xi - cx) * sa + (yi - cy) * ca))
-                    put(xr, yr, color, 1.0)
+    _render_bitfont_glyph(text, x0, y_base, rotation, color, put, glyph_size)
 
 
 def generate_captcha_image(text, width=160, height=52):

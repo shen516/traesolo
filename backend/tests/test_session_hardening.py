@@ -21,6 +21,38 @@ ERR_CAPTCHA_EXPIRED = "\u9a8c\u8bc1\u7801\u5df2\u8fc7\u671f"
 ERR_SESSION_INVALID = "\u5931\u6548"
 
 
+def test_bitfont_glyph_is_not_a_vertical_bar():
+    """5x7 字模必须按逗号分行；否则会画成竖条，肉眼像 I/!。"""
+    from api.auth import _BG_RGB, _render_bitfont_glyph
+
+    width, height = 40, 40
+    buf = bytearray(width * height * 3)
+    for i in range(width * height):
+        buf[i * 3: i * 3 + 3] = _BG_RGB
+
+    def put(x, y, color, alpha=1.0):
+        if not (0 <= x < width and 0 <= y < height):
+            return
+        o = (y * width + x) * 3
+        cr, cg, cb = color
+        buf[o] = int(buf[o] + (cr - buf[o]) * alpha)
+        buf[o + 1] = int(buf[o + 1] + (cg - buf[o + 1]) * alpha)
+        buf[o + 2] = int(buf[o + 2] + (cb - buf[o + 2]) * alpha)
+
+    _render_bitfont_glyph("A", 8, 8, 0, (255, 255, 255), put, 21)
+
+    xs = [
+        x
+        for y in range(height)
+        for x in range(width)
+        if tuple(buf[(y * width + x) * 3: (y * width + x) * 3 + 3]) != _BG_RGB
+    ]
+    assert xs, "glyph painted no pixels"
+    assert max(xs) - min(xs) >= 8, (
+        f"glyph too thin (width={max(xs) - min(xs)}); likely missing split(',')"
+    )
+
+
 def test_captcha_is_png_and_answer_is_not_plaintext(client):
     """Captcha must be a PNG bitmap; the answer must not appear in the image bytes.
 
