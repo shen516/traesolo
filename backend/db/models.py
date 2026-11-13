@@ -151,6 +151,12 @@ class Match(Base):
     odds_spf_lose = Column(DECIMAL(6, 2))
     # 竞彩比分玩法 SP：JSON 映射 比分→赔率（含胜/平/负其它）
     odds_bf_json = Column(TEXT)
+    # 半场胜平负三选一 SP（由半全场 9 项真实 SP 边际推导，来源标记 hh_derived，非官方直采）
+    odds_hspf_win = Column(DECIMAL(6, 2))
+    odds_hspf_draw = Column(DECIMAL(6, 2))
+    odds_hspf_lose = Column(DECIMAL(6, 2))
+    # 半全场 9 项原始真实 SP（胜胜/胜平/胜负/平胜/平平/平负/负胜/负平/负负），JSON
+    odds_hh_json = Column(TEXT)
     is_single = Column(Boolean, default=False)
     buy_end_time = Column(String(30))
     # 竞彩比分列表（live.500.com/jczq.php）：半场比分 / 场次编号 / 采集来源
@@ -267,6 +273,12 @@ class OddsSnapshot(Base):
     odds_spf_lose = Column(DECIMAL(6, 2))
     # 竞彩比分 SP。只在采集当时写入；赛果回写会覆盖 matches.odds_bf_json，不能倒推成赛前价
     odds_bf_json = Column(TEXT)
+    # 半场胜平负三选一 SP（半全场边际推导，快照只记采集当时值）
+    odds_hspf_win = Column(DECIMAL(6, 2))
+    odds_hspf_draw = Column(DECIMAL(6, 2))
+    odds_hspf_lose = Column(DECIMAL(6, 2))
+    # 半全场 9 项原始真实 SP
+    odds_hh_json = Column(TEXT)
     created_at = Column(TIMESTAMP, default=datetime.now)
 
     match = relationship('Match', backref='odds_snapshots')
@@ -274,6 +286,87 @@ class OddsSnapshot(Base):
     __table_args__ = (
         Index('idx_odds_snap_match_time', 'match_id', 'captured_at'),
         Index('idx_odds_snap_fixture', 'fixture_id'),
+    )
+
+
+class JingcaiMatchOdds(Base):
+    """竞彩足球当前在售玩法的赔率视图（500 trade.500.com/jczq 采集）。
+
+    与 odds_snapshots 分工：本表保存「某一销售日的当前在售玩法完整数据」，
+    以 500 侧主键 process_id + process_date 唯一；只保留最近 N 个销售日。
+    各玩法 SP 存 JSON（键为 500 data-value，如 bf "1:0" / bqc "3-3" / jqs "7"）。
+    仅供学习研究，不构成投注建议。
+    """
+    __tablename__ = 'jingcai_match_odds'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    # 500 侧主键
+    process_id = Column(String(20), nullable=False)
+    process_date = Column(String(10), nullable=False)
+    # 场次信息
+    match_num = Column(String(20))          # 周二001
+    fixture_id = Column(String(30))
+    match_id_500 = Column(String(30))       # 500 的 matchid
+    home_team_id = Column(String(20))
+    away_team_id = Column(String(20))
+    league_name = Column(String(100))
+    league_rank = Column(String(30))
+    home_name = Column(String(100), nullable=False)
+    away_name = Column(String(100), nullable=False)
+    match_date = Column(DATE)
+    match_time = Column(String(10))
+    buy_end_time = Column(String(30))
+    is_end = Column(Boolean, default=False)
+    handicap = Column(Integer)              # 让球盘口（主队让球数）
+    kdg = Column(Boolean, default=False)    # 是否可单关
+    # 各玩法单关/过关开关：{"spf":{"dg":true,"gg":true}, ...}
+    subactive_json = Column(TEXT)
+    # 各玩法 SP：{"spf":{"3":2.1,"1":3.2,"0":3.5}, ...}
+    odds_json = Column(TEXT)
+    # 赛果（历史对照用）
+    home_goals = Column(Integer)
+    away_goals = Column(Integer)
+    result = Column(String(1))              # H/D/A
+    source = Column(String(20), default='500_trade_mix')
+    captured_at = Column(TIMESTAMP, default=datetime.now, nullable=False)
+    updated_at = Column(TIMESTAMP, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint('process_id', 'process_date', name='uq_jingcai_process'),
+        Index('idx_jingcai_date', 'process_date'),
+        Index('idx_jingcai_fixture', 'fixture_id'),
+    )
+
+
+class JingcaiSpChange(Base):
+    """竞彩 SP 异动记录（轮询时对比前后 odds_json 生成）。
+
+    记录单场某玩法某选项的赔率变化：old_sp → new_sp，供异动监测与告警。
+    仅供学习研究，不构成投注建议。
+    """
+    __tablename__ = 'jingcai_sp_change'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    process_id = Column(String(20), nullable=False)
+    process_date = Column(String(10), nullable=False)
+    match_num = Column(String(20))
+    home_name = Column(String(100))
+    away_name = Column(String(100))
+    league_name = Column(String(100))
+    play = Column(String(10), nullable=False)      # spf/nspf/bf/jqs/bqc
+    option = Column(String(10), nullable=False)    # 选项值，如 3/1/0、1:0、7
+    old_sp = Column(DECIMAL(10, 3))
+    new_sp = Column(DECIMAL(10, 3))
+    change_pct = Column(DECIMAL(10, 4))            # (new-old)/old
+    change_type = Column(String(10), default='normal')  # normal | spike
+    alert = Column(Boolean, default=False)         # 是否触发阈值告警
+    threshold = Column(DECIMAL(10, 4))             # 触发时的阈值
+    detected_at = Column(TIMESTAMP, default=datetime.now, nullable=False)
+
+    __table_args__ = (
+        Index('idx_sp_change_process', 'process_id', 'process_date'),
+        Index('idx_sp_change_detected', 'detected_at'),
+        Index('idx_sp_change_alert', 'alert'),
     )
 
 
@@ -322,6 +415,54 @@ class SimulationHistory(Base):
     __table_args__ = (
         Index('idx_sim_history_created', 'created_at'),
         Index('idx_sim_history_match', 'match_id'),
+    )
+
+
+class SimulationBet(Base):
+    """模拟投注单（一行一选项）。
+
+    仅供学习/研究/数据分析，不构成投注建议、不接入真实资金。
+    结算以 sp_at_create（下单时刻 SP）为准，避免赛时 SP 变动歧义。
+    单关：combination_id IS NULL，独立结算。
+    串关：同 combination_id 多行共享，组合整体结算（任一未中→整组 lost，
+    全部命中→各腿 SP 乘积 × 2 × 倍数，封顶 PAYOUT_CAP_PARLAY）。
+    """
+    __tablename__ = 'simulation_bets'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    match_id = Column(String(50), nullable=False)
+    match_no = Column(String(20))
+    match_name = Column(String(200))
+    play_type = Column(Enum('spf', 'nspf', 'bf', 'tg', 'hspf'), nullable=False)
+    selection = Column(String(30), nullable=False)
+    sp_at_create = Column(DECIMAL(8, 2), nullable=False)
+    sp_source_at_create = Column(Enum('snapshot', 'real', 'synthetic', 'manual'), nullable=False)
+    stake = Column(DECIMAL(8, 2), nullable=False, default=2.00)
+    multiple = Column(Integer, nullable=False, default=1)
+    status = Column(
+        Enum('pending', 'won', 'lost', 'void'),
+        default='pending', nullable=False,
+    )
+    payout = Column(DECIMAL(10, 2), nullable=False, default=0)
+    settle_note = Column(String(100))
+    # 结算连续失败计数（赛果缺失等），达到阈值置 void
+    settle_fail_count = Column(Integer, nullable=False, default=0)
+    # 结算时使用的赛果快照（"hg:ag"），用于赛果改判竞态对比
+    settle_score_snapshot = Column(String(10))
+    settled_at = Column(TIMESTAMP)
+    created_at = Column(TIMESTAMP, default=datetime.now)
+    # 串关组合 ID：同组合多行共享；NULL = 单关（兼容既有行）
+    combination_id = Column(String(40), index=True)
+    is_parlay = Column(Boolean, default=False)
+
+    user = relationship('User')
+
+    __table_args__ = (
+        Index('idx_sim_bet_user_created', 'user_id', 'created_at'),
+        Index('idx_sim_bet_status', 'status'),
+        Index('idx_sim_bet_match', 'match_id'),
+        Index('idx_sim_bet_combination', 'user_id', 'combination_id'),
     )
 
 

@@ -77,10 +77,25 @@ class MonteCarloSimulator:
                 "prob": round(float(counts[g]) / n, 4),
             })
 
+        # 半场三选一概率：半场进球 λ_half ≈ 0.45 × 全场 λ（足球界近似），
+        # 泊松独立模拟半场比分后聚合（供半场胜平负 hspf 落单玩法）。
+        lambda_half_home = float(lambda_home) * 0.45
+        lambda_half_away = float(lambda_away) * 0.45
+        half_home = rng.poisson(lambda_half_home, n)
+        half_away = rng.poisson(lambda_half_away, n)
+        half_win = float(np.mean(half_home > half_away))
+        half_draw = float(np.mean(half_home == half_away))
+        half_lose = float(np.mean(half_home < half_away))
+
         return {
             "home_win_prob": round(home_win_prob, 4),
             "draw_prob": round(draw_prob, 4),
             "away_win_prob": round(away_win_prob, 4),
+            "hspf_probs": {
+                "win": round(half_win, 4),
+                "draw": round(half_draw, 4),
+                "lose": round(half_lose, 4),
+            },
             "top_scores": top_scores,
             "goal_distribution": goal_distribution,
             "total_goals_avg": round(float(np.mean(total_goals)), 4),

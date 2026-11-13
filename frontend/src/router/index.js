@@ -58,6 +58,14 @@ const routes = [
     meta: { title: '分析汇总', icon: 'jingcai-bf-summary', keepAlive: true }
   },
   { path: '/jingcai-config', redirect: '/jingcai/bf' },
+  // ===== 竞彩足球全玩法列表（单关/胜平负/让球/混合过关/比分/进球数/半全场） =====
+  {
+    path: '/jingcai-trade/:play(dg|spf|hhgg|bf|jqs|bqc)',
+    name: 'JingcaiTradeList',
+    component: () => import('@/views/JingcaiTradeList.vue'),
+    meta: { title: '竞彩足球列表', icon: 'jingcai-trade', keepAlive: true }
+  },
+  { path: '/jingcai-trade', redirect: '/jingcai-trade/dg' },
   // ===== 详情页 =====
   {
     path: '/match/:id',
@@ -83,6 +91,12 @@ const routes = [
     name: 'Simulation',
     component: () => import('@/views/Simulation.vue'),
     meta: { title: '模拟预测', icon: 'simulation' }
+  },
+  {
+    path: '/simulation-bets',
+    name: 'SimulationBets',
+    component: () => import('@/views/SimulationBets.vue'),
+    meta: { title: '我的模拟投注', icon: 'simulation-bets' }
   },
   // 旧「我的关注」入口并入首页 tab
   {

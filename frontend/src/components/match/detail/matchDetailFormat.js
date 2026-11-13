@@ -1,5 +1,10 @@
 /** Pure helpers shared by MatchDetail page and its section components. */
 
+import { formatDate, formatTime } from '@/utils/formatters'
+
+// 日期/时间格式化统一来自 utils/formatters.js
+export { formatDate, formatTime }
+
 export function toCamelCase(str) {
   return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
 }
@@ -13,26 +18,6 @@ export function convertKeys(obj) {
     }, {})
   }
   return obj
-}
-
-export function formatDate(d) {
-  if (!d) return ''
-  if (typeof d === 'string') return d.slice(0, 10)
-  try {
-    const dt = new Date(d)
-    if (isNaN(dt.getTime())) return ''
-    const y = dt.getFullYear()
-    const m = String(dt.getMonth() + 1).padStart(2, '0')
-    const day = String(dt.getDate()).padStart(2, '0')
-    return `${y}-${m}-${day}`
-  } catch {
-    return ''
-  }
-}
-
-export function formatTime(t) {
-  if (!t) return ''
-  return String(t).slice(0, 5)
 }
 
 export function formatSnapshotTime(v) {

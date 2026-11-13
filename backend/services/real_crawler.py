@@ -396,8 +396,47 @@ class RealMatchCrawler:
         )
         return combined
 
+    def _crawl_jczq_hh(self, days_ahead: int = 7, days_back: int = 0) -> List[Dict]:
+        """爬取 trade.500.com/jczq 半全场页（playid=272）9 项真实 SP。
+
+        半场三选一（hspf）无官方独立产品，由 9 项半全场真实 SP 边际推导，
+        来源标记 500_trade_hh（hspf 标注 hh_derived，非官方直采）。
+        """
+        from services.match_dedup import dedup_crawled_matches
+
+        days_a = max(0, min(int(7 if days_ahead is None else days_ahead), 14))
+        days_b = max(0, min(int(0 if days_back is None else days_back), 90))
+        base = f"{self.trade_url}?playid=272&g=2"
+        buckets: List[Dict] = []
+        buckets.extend(self._crawl_jczq_trade_url(base, extract_hh=True))
+        for d in [date.today() + timedelta(days=i) for i in range(0, days_a + 1)]:
+            buckets.extend(
+                self._crawl_jczq_trade_url(
+                    f"{base}&date={d.strftime('%Y-%m-%d')}",
+                    d.strftime('%Y-%m-%d'),
+                    extract_hh=True,
+                )
+            )
+        for d in [date.today() - timedelta(days=i) for i in range(1, days_b + 1)]:
+            buckets.extend(
+                self._crawl_jczq_trade_url(
+                    f"{base}&date={d.strftime('%Y-%m-%d')}",
+                    d.strftime('%Y-%m-%d'),
+                    extract_hh=True,
+                )
+            )
+        combined = dedup_crawled_matches(buckets)
+        # 半全场玩法以有 odds_hh_json 为准；去重后丢弃空投注区
+        combined = [m for m in combined if m.get('odds_hh_json')]
+        logger.info(
+            "Crawled %s unique jingcai HH matches (days_ahead=%s, days_back=%s, raw=%s)",
+            len(combined), days_a, days_b, len(buckets),
+        )
+        return combined
+
     def _crawl_jczq_trade_url(
-        self, url: str, date_str: str = None, extract_bf: bool = False
+        self, url: str, date_str: str = None,
+        extract_bf: bool = False, extract_hh: bool = False,
     ) -> List[Dict]:
         matches = []
         try:
@@ -408,7 +447,9 @@ class RealMatchCrawler:
                 text = r.content.decode('utf-8', errors='replace')
             soup = BeautifulSoup(text, 'html.parser')
             for tr in soup.select('table.bet-tb tr.bet-tb-tr'):
-                item = self._parse_trade_match_row(tr, date_str, extract_bf=extract_bf)
+                item = self._parse_trade_match_row(
+                    tr, date_str, extract_bf=extract_bf, extract_hh=extract_hh,
+                )
                 if item:
                     matches.append(item)
             logger.info("Crawled %s matches from %s", len(matches), url)
@@ -510,7 +551,10 @@ class RealMatchCrawler:
             logger.error(f"Failed to parse match row: {str(e)}")
             return None
 
-    def _parse_trade_match_row(self, tr, date_str: str = None, extract_bf: bool = False) -> Optional[Dict]:
+    def _parse_trade_match_row(
+        self, tr, date_str: str = None,
+        extract_bf: bool = False, extract_hh: bool = False,
+    ) -> Optional[Dict]:
         try:
             tds = tr.find_all('td', recursive=False)
             if len(tds) < 4:
@@ -584,7 +628,7 @@ class RealMatchCrawler:
                     if not is_end:
                         status = 'upcoming'
 
-            odds = {} if extract_bf else self._extract_trade_odds(tr)
+            odds = {} if (extract_bf or extract_hh) else self._extract_trade_odds(tr)
             handicap_raw = tr.get('data-rangqiu')
             handicap = None
             if handicap_raw not in (None, ''):
@@ -594,12 +638,25 @@ class RealMatchCrawler:
                     handicap = None
 
             odds_bf_json = None
+            odds_hh_json = None
             if extract_bf:
                 bf_map = self._extract_bf_odds(tr)
                 if not bf_map:
                     return None
                 import json as _json
                 odds_bf_json = _json.dumps(bf_map, ensure_ascii=False, separators=(',', ':'))
+            if extract_hh:
+                hh_map = self._extract_hh_odds(tr)
+                if not hh_map:
+                    return None
+                import json as _json
+                odds_hh_json = _json.dumps(hh_map, ensure_ascii=False, separators=(',', ':'))
+                hspf = self._derive_hspf_from_hh(hh_map)
+                if not hspf:
+                    return None
+                odds_hspf_win, odds_hspf_draw, odds_hspf_lose = hspf
+            else:
+                odds_hspf_win = odds_hspf_draw = odds_hspf_lose = None
 
             match_id = f"{league_id}-{match_date.strftime('%Y-%m-%d')}-{home_team_id}-{away_team_id}"
             return {
@@ -633,9 +690,16 @@ class RealMatchCrawler:
                 'odds_spf_draw': odds.get('spf_draw'),
                 'odds_spf_lose': odds.get('spf_lose'),
                 'odds_bf_json': odds_bf_json,
+                'odds_hh_json': odds_hh_json,
+                'odds_hspf_win': odds_hspf_win,
+                'odds_hspf_draw': odds_hspf_draw,
+                'odds_hspf_lose': odds_hspf_lose,
                 'is_single': str(tr.get('data-kdg') or '') == '1',
                 'buy_end_time': tr.get('data-buyendtime') or None,
-                'source': '500_trade_bf' if extract_bf else '500_trade',
+                'source': (
+                    '500_trade_hh' if extract_hh
+                    else ('500_trade_bf' if extract_bf else '500_trade')
+                ),
             }
         except Exception as e:
             logger.error("Failed to parse trade match row: %s", e)
@@ -676,6 +740,70 @@ class RealMatchCrawler:
                 continue
             out[dval] = val
         return out or None
+
+    def _extract_hh_odds(self, tr) -> Optional[dict]:
+        """从半全场页（playid=272）行内提取 9 项真实 SP。
+
+        data-value 形如 "3-3"（半场-全场，3=胜/1=平/0=负），
+        映射为可读键：'胜胜'/'胜平'/'胜负'/'平胜'/'平平'/'平负'/'负胜'/'负平'/'负负'。
+        半全场按钮直接在行内（p.betbtn[data-type="bqc"]），无需展开区。
+        """
+        key_map = {'3': '胜', '1': '平', '0': '负'}
+        out = {}
+        for btn in tr.select('p.betbtn[data-type="bqc"]'):
+            dval = (btn.get('data-value') or '').strip()
+            sp = btn.get('data-sp')
+            if not dval or sp in (None, '', '-', '未开售'):
+                continue
+            try:
+                val = float(sp)
+            except (TypeError, ValueError):
+                continue
+            if val <= 0:
+                continue
+            parts = dval.split('-')
+            if len(parts) != 2:
+                continue
+            ht, ft = parts[0], parts[1]
+            if ht not in key_map or ft not in key_map:
+                continue
+            out[f"{key_map[ht]}{key_map[ft]}"] = val
+        return out or None
+
+    @staticmethod
+    def _derive_hspf_from_hh(hh_map: dict) -> Optional[tuple]:
+        """由半全场 9 项真实 SP 边际推导半场三选一 SP（非官方直采）。
+
+        半场主胜概率 = Σ 半场胜各全场结果 1/SP 之和 / Σ 全部 9 项 1/SP；
+        再取倒数得 SP（round 到 2 位）。缺失任一项则无法推导。
+        返回 (win_sp, draw_sp, lose_sp) 或 None。
+        """
+        if not hh_map:
+            return None
+        groups = {'胜': ['胜胜', '胜平', '胜负'], '平': ['平胜', '平平', '平负'], '负': ['负胜', '负平', '负负']}
+        agg = {}
+        for ht, keys in groups.items():
+            s = 0.0
+            for k in keys:
+                sp = hh_map.get(k)
+                if not sp or sp <= 0:
+                    return None
+                s += 1.0 / sp
+            agg[ht] = s
+        total = sum(agg.values())
+        if total <= 0:
+            return None
+        result = []
+        for ht in ('胜', '平', '负'):
+            p = agg[ht] / total
+            if p <= 0:
+                return None
+            result.append(round(1.0 / p, 2))
+        win_sp, draw_sp, lose_sp = result
+        # 合理性护栏：SP 需为正且与边际概率一致（过小/过大视为解析异常）
+        if min(win_sp, draw_sp, lose_sp) < 1.01 or max(win_sp, draw_sp, lose_sp) > 100:
+            return None
+        return win_sp, draw_sp, lose_sp
 
     def _five00_team_id(self, raw_id) -> Optional[str]:
         """500 data-homeid/awayid → 规范 T{id}（可入库的干净 ID）。"""

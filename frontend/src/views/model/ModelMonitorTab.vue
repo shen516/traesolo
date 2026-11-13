@@ -165,9 +165,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import echarts from '@/utils/echarts'
+import { useEChart } from '@/composables/useEChart'
 import { CHART_COLORS, MODEL_COLORS } from '@/utils/chartTheme'
 import { modelApi, trendApi } from '@/api'
 import ScoreTop3BacktestCard from '@/components/jingcai/ScoreTop3BacktestCard.vue'
@@ -185,8 +186,6 @@ const isMonitorActive = computed(() => route.params.tab === 'monitor')
 
 const trendChartRef = ref(null)
 const calibrationChartRef = ref(null)
-let trendChart = null
-let calibrationChart = null
 
 const monitorDays = ref(30)
 const monitorDrift = ref(null)
@@ -206,13 +205,11 @@ const playBreakdownRows = computed(() => {
   ]
 })
 
-function initTrendChart() {
-  if (!trendChartRef.value) return
-  if (!trendChart) trendChart = echarts.init(trendChartRef.value)
+function buildTrendChartOption() {
   const accValues = accuracyTrend.value.map(i => Number(i.accuracy)).filter(n => !Number.isNaN(n))
   const yMin = accValues.length ? Math.max(0, Math.floor(Math.min(...accValues) - 5)) : 40
   const yMax = accValues.length ? Math.min(100, Math.ceil(Math.max(...accValues) + 5)) : 80
-  trendChart.setOption({
+  return {
     tooltip: { trigger: 'axis', formatter: params => `${params[0].axisValue}<br/>准确率: <b>${params[0].data}%</b>` },
     grid: { left: 44, right: 20, top: 20, bottom: 30 },
     xAxis: {
@@ -249,18 +246,20 @@ function initTrendChart() {
         },
       },
     ],
-  })
+  }
 }
 
-function initCalibrationChart() {
-  if (!calibrationChartRef.value || !monitorCalibration.value) return
-  if (!calibrationChart) calibrationChart = echarts.init(calibrationChartRef.value)
+// 图表实例生命周期（init/setOption/resize/dispose）统一交给 useEChart 管理，render 幂等复用实例
+const { render: renderTrendChart } = useEChart(trendChartRef, buildTrendChartOption)
+
+function buildCalibrationChartOption() {
+  if (!monitorCalibration.value) return null
   const bins = monitorCalibration.value.calibration_bins || []
   const n = bins.length || 5
   const labels = bins.map((_, i) => `${Math.round(((i + 0.5) / n) * 100)}%`)
   const conf = bins.map(b => (b.avg_confidence != null ? +(b.avg_confidence * 100).toFixed(1) : null))
   const acc = bins.map(b => (b.avg_accuracy != null ? +(b.avg_accuracy * 100).toFixed(1) : null))
-  calibrationChart.setOption({
+  return {
     tooltip: {
       trigger: 'axis',
       formatter: (params) => {
@@ -291,8 +290,11 @@ function initCalibrationChart() {
       { name: '平均置信度', type: 'bar', data: conf, itemStyle: { color: MODEL_COLORS.poisson }, barGap: '10%' },
       { name: '实际命中率', type: 'bar', data: acc, itemStyle: { color: MODEL_COLORS.monte_carlo } },
     ],
-  })
+  }
 }
+
+// 校准图容器由 v-if 控制：render 前确保数据已就绪（容器是否可见由调用处的 nextTick 保证）
+const { render: renderCalibrationChart } = useEChart(calibrationChartRef, buildCalibrationChartOption)
 
 async function fetchMonitor() {
   monitorLoading.value = true
@@ -309,7 +311,7 @@ async function fetchMonitor() {
     monitorOddsDeviation.value = oddsDev
     monitorBreakdown.value = breakdown
     await nextTick()
-    initCalibrationChart()
+    renderCalibrationChart()
   } catch (e) {
     monitorError.value = e?.message || '模型监控加载失败'
   } finally {
@@ -328,31 +330,17 @@ async function loadMonitorTab() {
     }))
     await fetchMonitor()
     await nextTick()
-    initTrendChart()
+    renderTrendChart()
     if (monitorCalibration.value?.calibration_bins?.length) {
-      initCalibrationChart()
+      renderCalibrationChart()
     }
   } catch (e) {
     monitorError.value = e?.message || '监控数据加载失败'
   }
 }
 
-function handleResize() {
-  trendChart?.resize()
-  calibrationChart?.resize()
-}
-
 onMounted(() => {
   loadMonitorTab()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  trendChart?.dispose()
-  calibrationChart?.dispose()
-  trendChart = null
-  calibrationChart = null
 })
 </script>
 

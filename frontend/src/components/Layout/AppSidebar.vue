@@ -74,6 +74,7 @@ const allMenuGroups = [
       { path: '/matches', label: '赛事', icon: '⚽', perms: ['match:upcoming', 'match:finished', 'match:manage'], badgeKey: 'upcoming' },
       { path: '/leagues', label: '联赛列表', icon: '🏆', perms: ['league:view', 'league:manage'] },
       { path: '/simulation', label: '模拟预测', icon: '🎲', perms: ['simulation:view', 'model:manage'] },
+      { path: '/simulation-bets', label: '我的模拟投注', icon: '📝', perms: ['simulation:view'] },
     ],
   },
   {
@@ -82,6 +83,8 @@ const allMenuGroups = [
       { path: '/jingcai-live', label: '竞彩比分', icon: '📋', perms: ['match:jingcai_live', 'jingcai:manage', 'match:manage'] },
       { path: '/jingcai', label: '竞彩分析', icon: '🎯', perms: ['match:jingcai_bf', 'match:jingcai_bf_history', 'jingcai:manage', 'match:upcoming', 'match:finished', 'match:manage'] },
       { path: '/jingcai-bf-summary', label: '分析汇总', icon: '📈', perms: ['match:jingcai_bf_summary', 'jingcai:manage', 'match:jingcai_bf_history', 'match:finished', 'match:manage'] },
+      // 竞彩足球全玩法列表（trade.500.com/jczq，视图内可切换 单关/胜平负/让球/混合过关/比分/进球数/半全场）
+      { path: '/jingcai-trade', label: '竞足列表', icon: '🎫', perms: ['jingcai:config', 'jingcai:manage', 'match:jingcai_bf'] },
     ],
   },
   {

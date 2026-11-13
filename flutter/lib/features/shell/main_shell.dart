@@ -35,7 +35,8 @@ class MainShell extends StatelessWidget {
           NavigationDestination(
             icon: Icon(Icons.analytics_outlined),
             selectedIcon: Icon(Icons.analytics),
-            label: '竞彩分析',
+            // 标签缩短为两字，避免小屏下「竞彩分析」被截断（NAV-02）
+            label: '竞彩',
             tooltip: '竞彩分析',
           ),
           NavigationDestination(

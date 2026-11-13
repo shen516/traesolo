@@ -22,12 +22,14 @@ import { leagueApi } from './league'
 import { teamApi } from './team'
 import { matchApi } from './match'
 import { jingcaiApi, matchJingcaiCompat } from './jingcai'
+import { jingcaiTradeApi } from './jingcaiTrade'
 import { predictionApi, modelStatusApi } from './prediction'
 import { userApi, subscriptionApi, followApi, favoriteApi, historyApi } from './user'
 import { modelApi, riskApi, trendApi } from './model'
 import { standingsApi, scorersApi, playerApi } from './data'
 import { scheduleApi } from './schedule'
 import { permissionApi } from './permission'
+import { simulationBetApi } from './simulationBet'
 
 export {
   authApi,
@@ -35,6 +37,7 @@ export {
   teamApi,
   matchApi,
   jingcaiApi,
+  jingcaiTradeApi,
   predictionApi,
   modelStatusApi,
   userApi,
@@ -50,6 +53,7 @@ export {
   playerApi,
   scheduleApi,
   permissionApi,
+  simulationBetApi,
   API_BASE_URL,
 }
 

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
+import '../../data/models/user.dart';
 import '../auth/auth_state.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -22,31 +23,51 @@ class ProfileScreen extends ConsumerWidget {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  Text(
-                    user?.username ?? '-',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    user?.email ?? '未设置邮箱',
-                    style: const TextStyle(color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '订阅：${user?.subscriptionPlan ?? 'free'}'
-                    '${user?.subscriptionStatus != null ? ' · ${user!.subscriptionStatus}' : ''}',
-                    style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
-                  ),
-                  if (auth.roles.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      '角色：${auth.roles.join('、')}',
-                      style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
+                  // 头像视觉元素：取用户名首字母（PROFILE-01）
+                  CircleAvatar(
+                    radius: 26,
+                    backgroundColor: AppColors.gold,
+                    child: Text(
+                      _initial(user?.username),
+                      style: const TextStyle(
+                        color: AppColors.bgPrimary,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ],
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          user?.username ?? '-',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          user?.email ?? '未设置邮箱',
+                          style: const TextStyle(color: AppColors.textSecondary),
+                        ),
+                        if (auth.roles.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '角色：${auth.roles.join('、')}',
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -60,6 +81,19 @@ class ProfileScreen extends ConsumerWidget {
                   title: const Text('修改密码'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => context.push('/change-password'),
+                ),
+                const Divider(height: 1),
+                // 订阅方案入口：展示当前计划并说明升级渠道（PROFILE-02）
+                ListTile(
+                  leading: const Icon(Icons.workspace_premium, color: AppColors.gold),
+                  title: const Text('订阅方案'),
+                  subtitle: Text(
+                    '当前：${user?.subscriptionPlan ?? 'free'}'
+                    '${user?.subscriptionStatus != null ? ' · ${user!.subscriptionStatus}' : ''}',
+                    style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                  ),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => _showSubscriptionDialog(context, user),
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -86,8 +120,12 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 24),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.red),
+          // 退出登录改用描边红样式：弱化危险操作的视觉权重，不再整块红色填充（PROFILE-04）
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.red,
+              side: const BorderSide(color: AppColors.red),
+            ),
             onPressed: auth.isLoading
                 ? null
                 : () async {
@@ -103,7 +141,10 @@ class ProfileScreen extends ConsumerWidget {
                           ),
                           TextButton(
                             onPressed: () => Navigator.pop(ctx, true),
-                            child: const Text('退出'),
+                            child: const Text(
+                              '退出',
+                              style: TextStyle(color: AppColors.red),
+                            ),
                           ),
                         ],
                       ),
@@ -113,6 +154,33 @@ class ProfileScreen extends ConsumerWidget {
                     }
                   },
             child: const Text('退出登录'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _initial(String? username) {
+    final name = username?.trim();
+    if (name == null || name.isEmpty) return '?';
+    // 取首个 Unicode 码点，兼容中文用户名
+    return String.fromCharCode(name.runes.first).toUpperCase();
+  }
+
+  void _showSubscriptionDialog(BuildContext context, UserProfile? user) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('订阅方案'),
+        content: Text(
+          '当前订阅：${user?.subscriptionPlan ?? 'free'}'
+          '${user?.subscriptionStatus != null ? '（${user!.subscriptionStatus}）' : ''}。\n\n'
+          '如需升级订阅，请登录 Web 端在「订阅管理」中操作，或联系管理员开通。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('知道了'),
           ),
         ],
       ),

@@ -337,6 +337,7 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { userApi, permissionApi, subscriptionApi } from '@/api'
+import { formatDate as baseFormatDate, formatCompactDateTime } from '@/utils/formatters'
 import Pagination from '@/components/common/Pagination.vue'
 import StateBlock from '@/components/common/StateBlock.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -396,17 +397,11 @@ const subRecords = ref([])
 const plans = ref([])
 const subForm = reactive({ plan_code: 'pro_month', note: '' })
 
-function formatDate(dateStr) {
-  if (!dateStr) return '-'
-  return String(dateStr).split('T')[0]
-}
+// 订阅日期展示：YYYY-MM-DD，空值显示 '-'
+const formatDate = (dateStr) => baseFormatDate(dateStr, '-')
 
-function formatDateTime(dateStr) {
-  if (!dateStr) return '从未登录'
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return String(dateStr)
-  return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
+// 最近登录展示：紧凑 M-D HH:MM，从未登录显示提示文案
+const formatDateTime = (dateStr) => formatCompactDateTime(dateStr, '从未登录')
 
 function subscriptionText(s) {
   return { active: '有效', expired: '过期', cancelled: '取消' }[s] || s
@@ -512,9 +507,16 @@ function openEditDialog(user) {
   userDialogVisible.value = true
 }
 
+// 邮箱格式正则（前端预校验，后端仍做权威校验）
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 async function saveUser() {
   if (!userForm.username || !userForm.email) {
     error.value = '用户名和邮箱不能为空'
+    return
+  }
+  if (!EMAIL_RE.test(userForm.email)) {
+    error.value = '邮箱格式不正确'
     return
   }
   if (!editMode.value && !userForm.password) {

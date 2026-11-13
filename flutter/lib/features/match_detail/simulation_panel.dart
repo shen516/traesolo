@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +12,7 @@ import '../../core/theme.dart';
 import '../../data/models/sensitivity.dart';
 import '../../data/models/simulation.dart';
 import '../../widgets/prediction_panel.dart';
+import 'bet_builder_panel.dart';
 import '../auth/auth_state.dart';
 
 final simHistoryProvider =
@@ -50,16 +54,61 @@ class _SimulationPanelState extends ConsumerState<SimulationPanel> {
   String? _error;
   SimulationResult? _result;
   SensitivityResult? _sensitivity;
+  CancelToken? _cancelToken;
+  Timer? _progressTimer;
+  int _progressStage = 0;
 
   static const _simOptions = [3000, 5000, 10000, 20000];
+
+  static const _simStages = [
+    '正在生成随机样本…',
+    '正在计算泊松概率…',
+    '正在运行蒙特卡洛模拟…',
+    '正在汇总结果…',
+  ];
+
+  static const _sensStages = [
+    '正在扫描 λ 参数空间…',
+    '正在逐点计算模拟…',
+    '正在汇总敏感性结果…',
+  ];
 
   bool get _busy => _running || _sensRunning;
 
   @override
   void dispose() {
+    _progressTimer?.cancel();
+    _cancelToken?.cancel();
     _seedCtrl.dispose();
     super.dispose();
   }
+
+  void _startProgressTimer(bool isSensitivity) {
+    _progressStage = 0;
+    _progressTimer?.cancel();
+    final stages = isSensitivity ? _sensStages : _simStages;
+    _progressTimer = Timer.periodic(const Duration(seconds: 4), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() {
+        _progressStage = (_progressStage + 1) % stages.length;
+      });
+    });
+  }
+
+  void _stopProgressTimer() {
+    _progressTimer?.cancel();
+    _progressTimer = null;
+  }
+
+  void _cancel() {
+    _cancelToken?.cancel();
+  }
+
+  static bool _isCancelled(Object e) =>
+      e is DioException && e.type == DioExceptionType.cancel;
 
   int? _parseSeed() {
     final seedText = _seedCtrl.text.trim();
@@ -73,50 +122,66 @@ class _SimulationPanelState extends ConsumerState<SimulationPanel> {
 
   Future<void> _run() async {
     if (_busy) return;
+    final token = CancelToken();
+    _cancelToken = token;
     setState(() {
       _running = true;
       _error = null;
     });
+    _startProgressTimer(false);
     try {
       final result = await ref.read(simulationRepositoryProvider).simulate(
             matchId: widget.matchId,
             simulations: _simulations,
             seed: _parseSeed(),
+            cancelToken: token,
           );
       if (!mounted) return;
       setState(() => _result = result);
       ref.invalidate(simHistoryProvider(widget.matchId));
     } catch (e) {
       if (!mounted) return;
+      // 用户主动取消：静默处理，不显示错误
+      if (_isCancelled(e)) return;
       setState(() {
         _error = e is ApiException ? e.message : e.toString();
       });
     } finally {
+      _stopProgressTimer();
       if (mounted) setState(() => _running = false);
+      _cancelToken = null;
     }
   }
 
   Future<void> _runSensitivity() async {
     if (_busy) return;
+    final token = CancelToken();
+    _cancelToken = token;
     setState(() {
       _sensRunning = true;
       _error = null;
     });
+    _startProgressTimer(true);
     try {
       final result = await ref.read(simulationRepositoryProvider).sensitivity(
             matchId: widget.matchId,
             simulations: AppConfig.defaultSensitivitySimulations,
             seed: _parseSeed(),
+            cancelToken: token,
           );
       if (!mounted) return;
       setState(() => _sensitivity = result);
     } catch (e) {
       if (!mounted) return;
+      // 用户主动取消：静默处理，不显示错误
+      if (_isCancelled(e)) return;
       setState(() {
         _error = e is ApiException ? e.message : e.toString();
       });
     } finally {
+      _stopProgressTimer();
       if (mounted) setState(() => _sensRunning = false);
+      _cancelToken = null;
     }
   }
 
@@ -192,6 +257,19 @@ class _SimulationPanelState extends ConsumerState<SimulationPanel> {
                 );
               }).toList(),
             ),
+            // 次数与耗时提示：帮助用户理解大样本的代价（SIM-05）
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _simulations >= 10000
+                    ? '当前 $_simulations 次：结果更稳定，但耗时明显增加（上限 ${AppConfig.maxAppSimulations}）'
+                    : '可选 $_simulations 次，耗时较短；次数越多结果越稳定（上限 ${AppConfig.maxAppSimulations}）',
+                style: const TextStyle(
+                  color: AppColors.textMuted,
+                  fontSize: 11,
+                ),
+              ),
+            ),
             const SizedBox(height: 12),
             TextField(
               controller: _seedCtrl,
@@ -227,9 +305,21 @@ class _SimulationPanelState extends ConsumerState<SimulationPanel> {
               const SizedBox(height: 6),
               Text(
                 _sensRunning
-                    ? 'λ 扫描约 14 个点，请稍候'
-                    : '蒙特卡洛计算可能需要数十秒，请稍候',
+                    ? '${_sensStages[_progressStage]}（共约 14 个扫描点）'
+                    : _simStages[_progressStage],
                 style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: _cancel,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.red,
+                    side: const BorderSide(color: AppColors.red),
+                  ),
+                  child: const Text('取消本次计算'),
+                ),
               ),
             ],
             if (_error != null) ...[
@@ -241,6 +331,8 @@ class _SimulationPanelState extends ConsumerState<SimulationPanel> {
               const Divider(),
               const SizedBox(height: 8),
               _ResultView(result: _result!),
+              const SizedBox(height: 8),
+              SimulationBetPanel(result: _result!),
             ],
             if (_sensitivity != null) ...[
               const SizedBox(height: 16),
@@ -467,6 +559,10 @@ class _SensitivitySeriesBlock extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
+        if (series.points.length >= 2) ...[
+          _SensitivityLineChart(series: series),
+          const SizedBox(height: 8),
+        ],
         ...series.points.map((p) {
           final isBase = p.delta.abs() < 1e-9;
           return Padding(
@@ -510,6 +606,149 @@ class _SensitivitySeriesBlock extends StatelessWidget {
       ],
     );
   }
+}
+
+/// 简易折线图：展示 λ 扫描下胜平负概率变化趋势。
+class _SensitivityLineChart extends StatelessWidget {
+  const _SensitivityLineChart({required this.series});
+
+  final SensitivitySeries series;
+
+  @override
+  Widget build(BuildContext context) {
+    // 为图表补充语义摘要，读屏用户可获知趋势（A11Y-02）
+    final pts = series.points;
+    final base = pts
+        .where((p) => p.delta.abs() < 1e-9)
+        .toList();
+    String summary = 'λ 敏感性折线图，共 ${pts.length} 个扫描点';
+    if (base.isNotEmpty) {
+      final p = base.first;
+      summary =
+          'λ 敏感性折线图，共 ${pts.length} 个扫描点；'
+          '基准点主胜 ${_pct(p.homeWinProb)}、平局 ${_pct(p.drawProb)}、客胜 ${_pct(p.awayWinProb)}，'
+          '下方文字列出各点数值';
+    }
+    return Semantics(
+      label: summary,
+      child: SizedBox(
+        height: 120,
+        child: CustomPaint(
+          size: Size.infinite,
+          painter: _LineChartPainter(series: series),
+        ),
+      ),
+    );
+  }
+}
+
+class _LineChartPainter extends CustomPainter {
+  _LineChartPainter({required this.series});
+
+  final SensitivitySeries series;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pts = series.points;
+    if (pts.length < 2) return;
+
+    final w = size.width;
+    final h = size.height;
+    const padLeft = 28.0;
+    const padRight = 8.0;
+    const padTop = 8.0;
+    const padBottom = 16.0;
+    final chartW = w - padLeft - padRight;
+    final chartH = h - padTop - padBottom;
+
+    // X 范围：lambda 值
+    final xMin = pts.map((p) => p.lambda).reduce((a, b) => a < b ? a : b);
+    final xMax = pts.map((p) => p.lambda).reduce((a, b) => a > b ? a : b);
+    final xRange = (xMax - xMin).abs() < 1e-9 ? 1.0 : xMax - xMin;
+
+    double toX(double lambda) =>
+        padLeft + (lambda - xMin) / xRange * chartW;
+    double toY(double prob) =>
+        padTop + (1 - prob) * chartH;
+
+    // 背景网格
+    final gridPaint = Paint()
+      ..color = AppColors.bgCard
+      ..strokeWidth = 0.5;
+    for (var i = 0; i <= 4; i++) {
+      final y = padTop + chartH * i / 4;
+      canvas.drawLine(Offset(padLeft, y), Offset(w - padRight, y), gridPaint);
+    }
+
+    // Y 轴标签
+    final labelStyle = TextStyle(color: AppColors.textMuted, fontSize: 9);
+    for (var i = 0; i <= 4; i++) {
+      final prob = 1 - i / 4.0;
+      final y = padTop + chartH * i / 4;
+      final tp = TextPainter(
+        text: TextSpan(text: '${(prob * 100).round()}', style: labelStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(2, y - tp.height / 2));
+    }
+
+    // X 轴标签（首尾）
+    final xLabelStyle = TextStyle(color: AppColors.textMuted, fontSize: 9);
+    for (final lambda in [xMin, xMax]) {
+      final tp = TextPainter(
+        text: TextSpan(
+            text: lambda.toStringAsFixed(1), style: xLabelStyle),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(toX(lambda) - tp.width / 2, h - padBottom + 2));
+    }
+
+    // 三条折线
+    final lines = <(List<double?>, Color)>[
+      (pts.map((p) => p.homeWinProb).toList(), AppColors.gold),
+      (pts.map((p) => p.drawProb).toList(), AppColors.textMuted),
+      (pts.map((p) => p.awayWinProb).toList(), const Color(0xFF4FC3F7)),
+    ];
+
+    for (final (probs, color) in lines) {
+      final path = Path();
+      var first = true;
+      for (var i = 0; i < pts.length; i++) {
+        final prob = probs[i];
+        if (prob == null) continue;
+        final x = toX(pts[i].lambda);
+        final y = toY(prob);
+        if (first) {
+          path.moveTo(x, y);
+          first = false;
+        } else {
+          path.lineTo(x, y);
+        }
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
+
+    // 基准竖线
+    final baseX = toX(series.base);
+    final basePaint = Paint()
+      ..color = AppColors.gold.withValues(alpha: 0.3)
+      ..strokeWidth = 0.8;
+    canvas.drawLine(
+      Offset(baseX, padTop),
+      Offset(baseX, padTop + chartH),
+      basePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _LineChartPainter oldDelegate) =>
+      oldDelegate.series != series;
 }
 
 String _pct(double? v) {

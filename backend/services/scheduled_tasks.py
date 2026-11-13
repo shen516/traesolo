@@ -36,12 +36,44 @@ def get_task_definitions(crawler_service) -> List[Tuple[str, Callable, int, str,
             "定时采集 trade.500.com/jczq 比分页投注区 SP（分析用，默认 30 分钟）",
         ),
         (
+            "jingcai_hh_crawl",
+            crawler_service.crawl_jingcai_hh_odds,
+            30,
+            "竞彩半全场采集",
+            "odds",
+            "定时采集 trade.500.com/jczq?playid=272 半全场 9 项真实 SP 并推导半场三选一（分析用，默认 30 分钟）",
+        ),
+        (
             "jingcai_bf_history_crawl",
             crawler_service.crawl_jingcai_bf_history,
             360,
             "竞彩分析历史比分回补",
             "odds",
             "定时回补 trade.500.com/jczq?playid=271 历史日期比分投注区 SP，补齐「竞彩分析」历史比分列表（默认 6 小时，每次回补近 30 天）",
+        ),
+        (
+            "jingcai_trade_all_crawl",
+            crawler_service.crawl_jingcai_trade_all,
+            30,
+            "竞彩全玩法采集",
+            "odds",
+            "定时采集 trade.500.com/jczq 混合过关页全玩法（单关/胜平负让球/混合过关/比分/进球数/半全场）SP 与 subactive 开关，落 jingcai_match_odds 在售视图（分析用，默认 30 分钟）",
+        ),
+        (
+            "jingcai_trade_poll",
+            crawler_service.crawl_jingcai_trade_poll,
+            5,
+            "竞彩全玩法轮询",
+            "odds",
+            "轻量轮询：临近开赛（≤60 分钟）或已开赛/完赛缺赛果时才抓取并回补，否则跳过（低成本，默认 5 分钟）",
+        ),
+        (
+            "jingcai_trade_history",
+            crawler_service.crawl_jingcai_trade_history,
+            360,
+            "竞彩全玩法历史回补",
+            "odds",
+            "向后回补近 30 个销售日的全玩法 SP 与赛果到 jingcai_match_odds，供赛果校验与历史分析对照（分析用，默认 6 小时）",
         ),
         (
             "jingcai_score_crawl",
@@ -167,8 +199,9 @@ def get_task_definitions(crawler_service) -> List[Tuple[str, Callable, int, str,
 
 
 def get_system_task_definitions() -> List[Tuple[str, Callable, int, str, str, str]]:
-    """系统类任务（非采集）：订阅到期检查等。"""
+    """系统类任务（非采集）：订阅到期检查、模拟投注结算等。"""
     from services.subscription_service import expire_overdue_subscriptions_task
+    from services.simulation_bet_service import settle_task
     return [
         (
             "subscription_expire_check",
@@ -177,6 +210,14 @@ def get_system_task_definitions() -> List[Tuple[str, Callable, int, str, str, st
             "订阅到期检查",
             "subscription",
             "每日批量将到期订阅置为 expired（请求内懒检查之外的兜底，首次注册默认启用）",
+        ),
+        (
+            "simulation_bet_settle",
+            settle_task,
+            5,
+            "模拟投注结算",
+            "simulation",
+            "扫描 pending 且赛事已 finished 的模拟投注单，按实际赛果核对命中并计算模拟派奖（幂等，每 5 分钟）",
         ),
     ]
 

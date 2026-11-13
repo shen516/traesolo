@@ -192,6 +192,7 @@
 <script setup>
 import { ref, computed, onMounted, reactive } from 'vue'
 import { permissionApi } from '@/api'
+import { formatDateTime as baseFormatDateTime } from '@/utils/formatters'
 import Pagination from '@/components/common/Pagination.vue'
 import StateBlock from '@/components/common/StateBlock.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
@@ -231,12 +232,8 @@ const permissionGroups = computed(() => {
   return list.filter(p => !p.parent_id || p.parent_id === 0)
 })
 
-function formatDateTime(dateStr) {
-  if (!dateStr) return '-'
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return String(dateStr)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
+// 角色时间展示：YYYY-MM-DD HH:MM，空值显示 '-'
+const formatDateTime = (dateStr) => baseFormatDateTime(dateStr, '-')
 
 function isAllChecked(group) {
   const childIds = getAllChildIds(group)

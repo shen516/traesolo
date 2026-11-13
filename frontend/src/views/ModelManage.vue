@@ -33,10 +33,10 @@
       <button class="retry-btn" @click="fetchOverviewData">重试</button>
     </div>
 
-    <ModelOverviewTab v-show="activeTab === 'overview'" />
-    <ModelTrainingTab v-show="activeTab === 'training'" />
-    <ModelQualityTab v-show="activeTab === 'quality'" />
-    <ModelMonitorTab v-show="activeTab === 'monitor'" />
+    <!-- 只挂载路由对应的 tab，外层 KeepAlive 缓存；切回由 onActivated 恢复图表/轮询，页面卸载时各 tab 清理兜底仍执行 -->
+    <KeepAlive>
+      <component :is="currentTabComponent" />
+    </KeepAlive>
   </div>
 </template>
 
@@ -74,6 +74,15 @@ const activeTab = computed(() => {
   const t = route.params.tab
   return MODEL_TABS.has(t) ? t : 'overview'
 })
+
+// tab 组件映射（保留上方懒加载分包）；路由变化驱动挂载组件自动切换，无需额外 watch
+const tabComponents = {
+  overview: ModelOverviewTab,
+  training: ModelTrainingTab,
+  quality: ModelQualityTab,
+  monitor: ModelMonitorTab,
+}
+const currentTabComponent = computed(() => tabComponents[activeTab.value])
 
 const modelTabs = computed(() => [
   { key: 'overview', label: '概览' },

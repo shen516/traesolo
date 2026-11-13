@@ -87,6 +87,20 @@ export const scheduleApi = {
   runLiveJingcaiNow: () => request.post('/crawler/live-jingcai/schedule/run-now', null, { timeout: 180000 }),
   runLiveJingcai: (daysAhead = 1) => postCrawlAndWait('/crawler/live-jingcai/run', { params: { days_ahead: daysAhead } }, 180000),
 
+  // 竞彩全玩法（trade.500.com 混合过关 + 进球数）
+  enableJingcaiTrade: (interval = 30) => request.post('/crawler/jingcai-trade/schedule/enable', null, { params: { interval_minutes: interval } }),
+  disableJingcaiTrade: () => request.post('/crawler/jingcai-trade/schedule/disable'),
+  runJingcaiTradeNow: () => request.post('/crawler/jingcai-trade/schedule/run-now', null, { timeout: 300000 }),
+  runJingcaiTrade: (daysAhead = 7) => postCrawlAndWait('/crawler/jingcai-trade/run', { params: { days_ahead: daysAhead } }, 300000),
+  // 竞彩全玩法轮询（临近开赛/待回补赛果时轻量抓取）
+  enableJingcaiTradePoll: (interval = 5) => request.post('/crawler/jingcai-trade-poll/schedule/enable', null, { params: { interval_minutes: interval } }),
+  disableJingcaiTradePoll: () => request.post('/crawler/jingcai-trade-poll/schedule/disable'),
+  runJingcaiTradePollNow: () => request.post('/crawler/jingcai-trade-poll/schedule/run-now', null, { timeout: 180000 }),
+  // 竞彩全玩法历史回补（赛果对照）
+  enableJingcaiTradeHistory: (interval = 360) => request.post('/crawler/jingcai-trade-history/schedule/enable', null, { params: { interval_minutes: interval } }),
+  disableJingcaiTradeHistory: () => request.post('/crawler/jingcai-trade-history/schedule/disable'),
+  runJingcaiTradeHistoryNow: (daysBack = 30) => request.post('/crawler/jingcai-trade-history/schedule/run-now', null, { params: { days_back: daysBack }, timeout: 600000 }),
+
   // 伤病采集（分析风控）
   enableInjuryCrawl: (interval = 120) => request.post('/crawler/injuries/schedule/enable', null, { params: { interval_minutes: interval } }),
   disableInjuryCrawl: () => request.post('/crawler/injuries/schedule/disable'),

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
@@ -16,6 +17,9 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
+  static const _rememberKey = 'login_remember_username';
+  static const _savedUserKey = 'login_saved_username';
+
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _captchaCtrl = TextEditingController();
@@ -23,11 +27,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   CaptchaPayload? _captcha;
   bool _loadingCaptcha = false;
   bool _obscure = true;
+  bool _remember = false;
 
   @override
   void initState() {
     super.initState();
     Future.microtask(_refreshCaptcha);
+    _loadSavedUsername();
   }
 
   @override
@@ -37,6 +43,52 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     _captchaCtrl.dispose();
     super.dispose();
   }
+
+  /// 记住用户名：登录成功后按勾选状态写入本地（LOGIN-04）
+  Future<void> _loadSavedUsername() async {
+    final sp = await SharedPreferences.getInstance();
+    final saved = sp.getString(_savedUserKey);
+    final remember = sp.getBool(_rememberKey) ?? false;
+    if (!mounted) return;
+    setState(() {
+      _remember = remember;
+      if (remember && saved != null && saved.isNotEmpty) {
+        _userCtrl.text = saved;
+      }
+    });
+  }
+
+  Future<void> _persistUsername() async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setBool(_rememberKey, _remember);
+    if (_remember) {
+      await sp.setString(_savedUserKey, _userCtrl.text.trim());
+    } else {
+      await sp.remove(_savedUserKey);
+    }
+  }
+
+  /// 忘记密码引导：无自助找回接口，指向管理员重置与登录后修改（LOGIN-01）
+  void _showForgotPasswordDialog() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('忘记密码'),
+        content: const Text(
+          '暂不支持自助找回密码。请联系管理员在后台重置；'
+          '首次登录后可在「我的 → 修改密码」中自行修改。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _clearAuthError() => ref.read(authProvider.notifier).clearError();
 
   Future<void> _refreshCaptcha() async {
     setState(() => _loadingCaptcha = true);
@@ -71,7 +123,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           captchaId: captcha.captchaId,
           captchaCode: _captchaCtrl.text.trim(),
         );
-    if (!ok) {
+    if (ok) {
+      await _persistUsername();
+    } else {
       await _refreshCaptcha();
     }
   }
@@ -125,8 +179,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   const SizedBox(height: 32),
                   TextField(
                     controller: _userCtrl,
+                    autofocus: true, // 进入登录页自动聚焦用户名（LOGIN-03）
                     decoration: const InputDecoration(labelText: '用户名'),
                     textInputAction: TextInputAction.next,
+                    onChanged: (_) => _clearAuthError(),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -140,6 +196,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                     ),
                     textInputAction: TextInputAction.next,
+                    onChanged: (_) => _clearAuthError(),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -150,40 +207,77 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           decoration: const InputDecoration(labelText: '验证码'),
                           textInputAction: TextInputAction.done,
                           onSubmitted: (_) => _submit(),
+                          onChanged: (_) => _clearAuthError(),
                         ),
                       ),
                       const SizedBox(width: 12),
-                      InkWell(
-                        onTap: _loadingCaptcha ? null : _refreshCaptcha,
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          width: 120,
-                          height: 48,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: AppColors.bgCard,
+                      // 放大验证码点击热区至 56 高，并补充语义标签（LOGIN-02）
+                      Semantics(
+                        button: true,
+                        label: '图形验证码，点按刷新',
+                        child: Tooltip(
+                          message: '点击刷新验证码',
+                          child: InkWell(
+                            onTap: _loadingCaptcha ? null : _refreshCaptcha,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: AppColors.border),
+                            child: Container(
+                              width: 140,
+                              height: 56,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: AppColors.bgCard,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: AppColors.border),
+                              ),
+                              child: _loadingCaptcha
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : _captcha == null
+                                      ? const Text(
+                                          '点击刷新',
+                                          style: TextStyle(fontSize: 12),
+                                        )
+                                      : Image.memory(
+                                          Uint8List.fromList(
+                                            _captcha!.imageBytes,
+                                          ),
+                                          fit: BoxFit.contain,
+                                          gaplessPlayback: true,
+                                        ),
+                            ),
                           ),
-                          child: _loadingCaptcha
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : _captcha == null
-                                  ? const Text('点击刷新', style: TextStyle(fontSize: 12))
-                                  : Image.memory(
-                                      Uint8List.fromList(_captcha!.imageBytes),
-                                      fit: BoxFit.contain,
-                                      gaplessPlayback: true,
-                                    ),
                         ),
                       ),
                     ],
                   ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: Checkbox(
+                          value: _remember,
+                          onChanged: (v) =>
+                              setState(() => _remember = v ?? false),
+                        ),
+                      ),
+                      const Text(
+                        '记住用户名',
+                        style: TextStyle(color: AppColors.textSecondary),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: _showForgotPasswordDialog,
+                        child: const Text('忘记密码？'),
+                      ),
+                    ],
+                  ),
                   if (auth.error != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Text(
                       auth.error!,
                       style: const TextStyle(color: AppColors.red),

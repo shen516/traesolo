@@ -2,6 +2,11 @@
  * 模型管理页共用纯格式化函数（无状态，可单测）。
  */
 
+import { formatDate, formatDateTimeSec } from '@/utils/formatters'
+
+// 日期格式化统一来自 utils/formatters.js，并保持本模块既有导出名兼容
+export { formatDate }
+
 export const LEAGUE_NAME_MAP = {
   EPL: '英超',
   LALIGA: '西甲',
@@ -30,11 +35,6 @@ export function leagueName(id) {
   return LEAGUE_NAME_MAP[id] || id
 }
 
-export function formatDate(dateStr) {
-  if (!dateStr) return ''
-  return String(dateStr).split('T')[0].split(' ')[0]
-}
-
 export function formatTrendDate(dateStr) {
   if (!dateStr) return ''
   const parts = String(dateStr).split('T')[0].split(' ')[0].split('-')
@@ -42,9 +42,9 @@ export function formatTrendDate(dateStr) {
   return dateStr
 }
 
+/** 模型任务时间展示含秒；空值显示 '-' */
 export function formatDateTime(dateStr) {
-  if (!dateStr) return '-'
-  return String(dateStr).replace('T', ' ').slice(0, 19)
+  return formatDateTimeSec(dateStr, '-')
 }
 
 export function formatRange(start, end) {

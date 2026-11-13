@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -7,6 +8,8 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/league.dart';
 import '../../data/repositories/data_repository.dart';
+import '../../widgets/league_picker_field.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/team_logo.dart';
 import '../common/async_state_pane.dart';
 import '../follows/follow_providers.dart';
@@ -68,16 +71,13 @@ class DataScreen extends ConsumerWidget {
             );
           }
 
+          // 本地推导生效联赛：selectedId 失效时回退首个联赛，
+          // 无需在 build 中反向写状态（消除 postFrameCallback 反模式，DATA-03）
           final String effectiveId;
           if (selectedId != null && leagues.any((l) => l.id == selectedId)) {
             effectiveId = selectedId;
           } else {
             effectiveId = leagues.first.id;
-          }
-          if (selectedId != effectiveId) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              ref.read(selectedLeagueIdProvider.notifier).setId(effectiveId);
-            });
           }
 
           final boardAsync = ref.watch(leagueBoardProvider(effectiveId));
@@ -100,38 +100,19 @@ class DataScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: '联赛',
-                          contentPadding:
-                              EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        ),
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: effectiveId,
-                            isExpanded: true,
-                            items: leagues
-                                .map(
-                                  (l) => DropdownMenuItem(
-                                    value: l.id,
-                                    child: Text(
-                                      l.name,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: (v) {
-                              if (v != null) {
-                                ref
-                                    .read(selectedLeagueIdProvider.notifier)
-                                    .setId(v);
-                              }
-                            },
-                          ),
-                        ),
+                      child: LeaguePickerField(
+                        leagues: leagues,
+                        value: effectiveId,
+                        onChanged: (v) {
+                          if (v != null) {
+                            ref
+                                .read(selectedLeagueIdProvider.notifier)
+                                .setId(v);
+                          }
+                        },
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -150,6 +131,22 @@ class DataScreen extends ConsumerWidget {
                       ),
                     ),
                   ],
+                ),
+              ),
+              // 星标引导文案：说明关注动作的收益（DATA-01）
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    isFollowed
+                        ? '已关注该联赛：首页会展示其未赛与积分摘要'
+                        : '点右上角星标关注联赛，首页将展示其未赛与积分摘要',
+                    style: const TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 11,
+                    ),
+                  ),
                 ),
               ),
               Padding(
@@ -198,8 +195,7 @@ class DataScreen extends ConsumerWidget {
               ),
               Expanded(
                 child: boardAsync.when(
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
+                  loading: () => const SkeletonList(count: 8, cardHeight: 56),
                   error: (e, _) => AsyncStatePane.error(
                     error: e,
                     onRetry: () =>
@@ -389,6 +385,8 @@ class DataScreen extends ConsumerWidget {
     required bool currentlyFollowed,
   }) async {
     try {
+      // 关注操作轻触反馈（A11Y-04）
+      await HapticFeedback.lightImpact();
       await ref.read(followRepositoryProvider).toggle(
             leagueId,
             currentlyFollowed: currentlyFollowed,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,13 +9,20 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/league.dart';
 import '../../data/models/match.dart';
+import '../../widgets/league_picker_field.dart';
 import '../../widgets/prediction_panel.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/team_logo.dart';
 import '../common/async_state_pane.dart';
 import '../common/paged_matches.dart';
 import '../data/data_screen.dart' show leaguesProvider;
+import '../follows/follow_providers.dart';
 
 enum MatchTab { upcoming, finished }
+
+enum MatchTimeRange { all, today }
+
+enum MatchSort { time, league }
 
 @immutable
 class MatchFilter {
@@ -21,16 +30,25 @@ class MatchFilter {
     this.leagueId,
     this.keyword = '',
     this.matchDate,
+    this.onlyFollow = false,
+    this.timeRange = MatchTimeRange.all,
+    this.sortBy = MatchSort.time,
   });
 
   final String? leagueId;
   final String keyword;
   final DateTime? matchDate;
+  final bool onlyFollow;
+  final MatchTimeRange timeRange;
+  final MatchSort sortBy;
 
   bool get hasActive =>
       (leagueId != null && leagueId!.isNotEmpty) ||
       keyword.trim().isNotEmpty ||
-      matchDate != null;
+      matchDate != null ||
+      onlyFollow ||
+      timeRange != MatchTimeRange.all ||
+      sortBy != MatchSort.time;
 
   String? get matchDateParam {
     final d = matchDate;
@@ -45,6 +63,9 @@ class MatchFilter {
     String? leagueId,
     String? keyword,
     DateTime? matchDate,
+    bool? onlyFollow,
+    MatchTimeRange? timeRange,
+    MatchSort? sortBy,
     bool clearLeague = false,
     bool clearDate = false,
   }) {
@@ -52,6 +73,9 @@ class MatchFilter {
       leagueId: clearLeague ? null : (leagueId ?? this.leagueId),
       keyword: keyword ?? this.keyword,
       matchDate: clearDate ? null : (matchDate ?? this.matchDate),
+      onlyFollow: onlyFollow ?? this.onlyFollow,
+      timeRange: timeRange ?? this.timeRange,
+      sortBy: sortBy ?? this.sortBy,
     );
   }
 }
@@ -79,6 +103,12 @@ class MatchFilterNotifier extends Notifier<MatchFilter> {
     state = state.copyWith(matchDate: date, clearDate: date == null);
   }
 
+  void setOnlyFollow(bool v) => state = state.copyWith(onlyFollow: v);
+
+  void setTimeRange(MatchTimeRange v) => state = state.copyWith(timeRange: v);
+
+  void setSortBy(MatchSort v) => state = state.copyWith(sortBy: v);
+
   void clear() => state = const MatchFilter();
 }
 
@@ -93,17 +123,30 @@ class MatchListNotifier extends AsyncNotifier<PagedMatches> {
   Future<PagedMatches> build() async {
     ref.watch(matchTabProvider);
     ref.watch(matchFilterProvider);
-    return PagedMatches.fromPage(await _fetch(page: 1));
+    final followed = await ref.watch(followedIdsProvider.future);
+    return PagedMatches.fromPage(await _fetch(page: 1, followed: followed));
   }
 
-  Future<MatchListPage> _fetch({required int page}) {
+  Future<MatchListPage> _fetch({
+    required int page,
+    required Set<String> followed,
+  }) {
     final tab = ref.read(matchTabProvider);
     final filter = ref.read(matchFilterProvider);
     final repo = ref.read(matchRepositoryProvider);
     final keyword = filter.keyword.trim();
     final date = filter.matchDateParam;
+    final Future<MatchListPage> future;
     if (tab == MatchTab.upcoming) {
-      return repo.upcoming(
+      future = repo.upcoming(
+        page: page,
+        pageSize: AppConfig.pageSize,
+        leagueId: filter.leagueId,
+        keyword: keyword.isEmpty ? null : keyword,
+        matchDate: date,
+      );
+    } else {
+      future = repo.finished(
         page: page,
         pageSize: AppConfig.pageSize,
         leagueId: filter.leagueId,
@@ -111,19 +154,58 @@ class MatchListNotifier extends AsyncNotifier<PagedMatches> {
         matchDate: date,
       );
     }
-    return repo.finished(
-      page: page,
-      pageSize: AppConfig.pageSize,
-      leagueId: filter.leagueId,
-      keyword: keyword.isEmpty ? null : keyword,
-      matchDate: date,
+    return future.then((page) => _applyLocal(page: page, filter: filter, followed: followed));
+  }
+
+  MatchListPage _applyLocal({
+    required MatchListPage page,
+    required MatchFilter filter,
+    required Set<String> followed,
+  }) {
+    var list = page.matches;
+    if (filter.onlyFollow) {
+      list = list.where((m) => followed.contains(m.league.id)).toList();
+    }
+    if (filter.timeRange == MatchTimeRange.today) {
+      final now = DateTime.now();
+      list = list.where((m) {
+        final d = m.matchDate;
+        if (d == null) return false;
+        return d == _todayParam(now);
+      }).toList();
+    }
+    if (filter.sortBy == MatchSort.league) {
+      list = [...list]..sort((a, b) {
+          final c = a.league.name.compareTo(b.league.name);
+          return c != 0 ? c : a.whenText.compareTo(b.whenText);
+        });
+    } else if (filter.sortBy == MatchSort.time) {
+      list = [...list]..sort((a, b) => a.whenText.compareTo(b.whenText));
+    }
+    return MatchListPage(
+      matches: list,
+      page: page.page,
+      pageSize: page.pageSize,
+      total: list.length,
+      pages: page.pages,
+      disclaimer: page.disclaimer,
+      availableDates: page.availableDates,
+      missingScoreTotal: page.missingScoreTotal,
     );
   }
 
+  String _todayParam(DateTime now) {
+    final y = now.year.toString().padLeft(4, '0');
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
   Future<void> refresh() async {
+    final followed = await ref.read(followedIdsProvider.future);
     state = const AsyncLoading();
     state = await AsyncValue.guard(
-      () async => PagedMatches.fromPage(await _fetch(page: 1)),
+      () async => PagedMatches.fromPage(await _fetch(page: 1, followed: followed)),
     );
   }
 
@@ -135,7 +217,8 @@ class MatchListNotifier extends AsyncNotifier<PagedMatches> {
     if (current == null || current.loadingMore || !current.hasMore) return;
     state = AsyncData(current.copyWith(loadingMore: true));
     try {
-      final next = await _fetch(page: current.page + 1);
+      final followed = await ref.read(followedIdsProvider.future);
+      final next = await _fetch(page: current.page + 1, followed: followed);
       state = AsyncData(current.appendPage(next));
     } catch (_) {
       state = AsyncData(current.copyWith(loadingMore: false));
@@ -158,6 +241,7 @@ class MatchesScreen extends ConsumerStatefulWidget {
 class _MatchesScreenState extends ConsumerState<MatchesScreen> {
   late final TextEditingController _keywordCtrl;
   late final ScrollController _scrollCtrl;
+  Timer? _debounce;
   bool _filtersExpanded = false;
 
   @override
@@ -165,6 +249,15 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     super.initState();
     _keywordCtrl = TextEditingController(text: ref.read(matchFilterProvider).keyword);
     _scrollCtrl = ScrollController()..addListener(_onScroll);
+  }
+
+  /// 关键词输入 500ms 防抖后触发搜索，避免每次击键都请求（MATCH-01）
+  void _onKeywordChanged(String text) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      ref.read(matchFilterProvider.notifier).setKeyword(text);
+    });
   }
 
   void _onScroll() {
@@ -177,6 +270,7 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _scrollCtrl.dispose();
     _keywordCtrl.dispose();
     super.dispose();
@@ -189,13 +283,20 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
     final asyncList = ref.watch(matchListProvider);
     final leaguesAsync = ref.watch(leaguesProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('赛事'),
-        actions: [
-          IconButton(
-            tooltip: _filtersExpanded ? '收起筛选' : '筛选',
-            onPressed: () => setState(() => _filtersExpanded = !_filtersExpanded),
+    return PopScope(
+      canPop: !_filtersExpanded,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _filtersExpanded) {
+          setState(() => _filtersExpanded = false);
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('赛事'),
+          actions: [
+            IconButton(
+              tooltip: _filtersExpanded ? '收起筛选' : '筛选',
+              onPressed: () => setState(() => _filtersExpanded = !_filtersExpanded),
             icon: Badge(
               isLabelVisible: filter.hasActive,
               child: Icon(
@@ -228,8 +329,11 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 AsyncData(:final value) => value,
                 _ => const <LeagueItem>[],
               },
+              hasFollow: ref.watch(followedIdsProvider).value?.isNotEmpty ?? false,
               onLeague: (id) => ref.read(matchFilterProvider.notifier).setLeague(id),
+              onKeywordChanged: _onKeywordChanged,
               onKeywordSubmit: (text) {
+                _debounce?.cancel();
                 ref.read(matchFilterProvider.notifier).setKeyword(text);
               },
               onPickDate: () async {
@@ -249,23 +353,52 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                 _keywordCtrl.clear();
                 ref.read(matchFilterProvider.notifier).clear();
               },
+              onOnlyFollow: (v) => ref.read(matchFilterProvider.notifier).setOnlyFollow(v),
+              onTimeRange: (v) => ref.read(matchFilterProvider.notifier).setTimeRange(v),
+              onSortBy: (v) => ref.read(matchFilterProvider.notifier).setSortBy(v),
             ),
           Expanded(
             child: asyncList.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const SkeletonList(count: 6, cardHeight: 120),
               error: (e, _) => AsyncStatePane.error(
                 error: e,
                 onRetry: () => ref.read(matchListProvider.notifier).refresh(),
               ),
               data: (page) {
                 if (page.matches.isEmpty) {
+                  final onlyFollowEmpty = filter.onlyFollow && page.hasMore;
                   return AsyncStatePane.empty(
-                    message: filter.hasActive ? '没有符合筛选条件的赛事' : '暂无赛事',
+                    message: onlyFollowEmpty
+                        ? '当前页无关注联赛赛事，尝试加载更多'
+                        : (filter.hasActive ? '没有符合筛选条件的赛事' : '暂无赛事'),
                     onRetry: () => ref.read(matchListProvider.notifier).refresh(),
+                    action: filter.hasActive
+                        ? TextButton(
+                            onPressed: () {
+                              _keywordCtrl.clear();
+                              ref.read(matchFilterProvider.notifier).clear();
+                            },
+                            child: const Text('清除所有筛选条件'),
+                          )
+                        : null,
                   );
                 }
                 final extra = page.loadingMore || page.hasMore ? 1 : 0;
-                return RefreshIndicator(
+                final sortHint = filter.sortBy == MatchSort.league
+                    ? Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        child: Text(
+                          '排序仅对已加载内容生效',
+                          style: TextStyle(
+                              color: AppColors.textMuted, fontSize: 11),
+                        ),
+                      )
+                    : const SizedBox.shrink();
+                return Column(
+                  children: [
+                    sortHint,
+                    Expanded(
+                      child: RefreshIndicator(
                   onRefresh: () => ref.read(matchListProvider.notifier).refresh(),
                   child: ListView.separated(
                     controller: _scrollCtrl,
@@ -294,15 +427,19 @@ class _MatchesScreenState extends ConsumerState<MatchesScreen> {
                       final m = page.matches[index];
                       return _MatchCard(
                         match: m,
-                        onTap: () => context.push('/matches/${m.id}'),
+                        onTap: () => context.push('/match/${m.id}'),
                       );
                     },
                   ),
+                ),
+                    ),
+                  ],
                 );
               },
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -313,21 +450,31 @@ class _FilterPanel extends StatelessWidget {
     required this.filter,
     required this.keywordCtrl,
     required this.leagues,
+    required this.hasFollow,
     required this.onLeague,
+    required this.onKeywordChanged,
     required this.onKeywordSubmit,
     required this.onPickDate,
     required this.onClearDate,
     required this.onClearAll,
+    required this.onOnlyFollow,
+    required this.onTimeRange,
+    required this.onSortBy,
   });
 
   final MatchFilter filter;
   final TextEditingController keywordCtrl;
   final List<LeagueItem> leagues;
+  final bool hasFollow;
   final ValueChanged<String?> onLeague;
+  final ValueChanged<String> onKeywordChanged;
   final ValueChanged<String> onKeywordSubmit;
   final VoidCallback onPickDate;
   final VoidCallback onClearDate;
   final VoidCallback onClearAll;
+  final ValueChanged<bool> onOnlyFollow;
+  final ValueChanged<MatchTimeRange> onTimeRange;
+  final ValueChanged<MatchSort> onSortBy;
 
   @override
   Widget build(BuildContext context) {
@@ -338,38 +485,21 @@ class _FilterPanel extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            children: [
-              InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: '联赛',
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: SingleChildScrollView(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 联赛选择改为可搜索的底部抽屉，长列表更易用（MATCH-04）
+                LeaguePickerField(
+                  leagues: leagues,
+                  value: leagueValue,
+                  allowAll: true,
+                  onChanged: onLeague,
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<String?>(
-                    value: leagueValue,
-                    isExpanded: true,
-                    hint: const Text('全部联赛'),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('全部联赛'),
-                      ),
-                      ...leagues.map(
-                        (l) => DropdownMenuItem<String?>(
-                          value: l.id,
-                          child: Text(l.name, overflow: TextOverflow.ellipsis),
-                        ),
-                      ),
-                    ],
-                    onChanged: onLeague,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
+                const SizedBox(height: 8),
               TextField(
                 controller: keywordCtrl,
                 textInputAction: TextInputAction.search,
@@ -377,10 +507,12 @@ class _FilterPanel extends StatelessWidget {
                   labelText: '关键词',
                   hintText: '球队名 / 赛事',
                   suffixIcon: IconButton(
+                    tooltip: '立即搜索',
                     icon: const Icon(Icons.search),
                     onPressed: () => onKeywordSubmit(keywordCtrl.text),
                   ),
                 ),
+                onChanged: onKeywordChanged,
                 onSubmitted: onKeywordSubmit,
               ),
               const SizedBox(height: 8),
@@ -411,9 +543,69 @@ class _FilterPanel extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '时间快捷',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                children: [
+                  ChoiceChip(
+                    label: const Text('全部'),
+                    selected: filter.timeRange == MatchTimeRange.all,
+                    onSelected: (_) => onTimeRange(MatchTimeRange.all),
+                  ),
+                  ChoiceChip(
+                    label: const Text('今天'),
+                    selected: filter.timeRange == MatchTimeRange.today,
+                    onSelected: (_) => onTimeRange(MatchTimeRange.today),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '排序',
+                  style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 6),
+              SegmentedButton<MatchSort>(
+                segments: const [
+                  ButtonSegment(value: MatchSort.time, label: Text('开赛时间')),
+                  ButtonSegment(value: MatchSort.league, label: Text('联赛')),
+                ],
+                selected: {filter.sortBy},
+                onSelectionChanged: (s) => onSortBy(s.first),
+                showSelectedIcon: false,
+                style: SegmentedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              const SizedBox(height: 4),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('仅显示我关注的联赛'),
+                value: filter.onlyFollow,
+                onChanged: hasFollow ? onOnlyFollow : null,
+                subtitle: hasFollow
+                    ? null
+                    : const Text(
+                        '暂无关注联赛，请先在数据页添加关注',
+                        style: TextStyle(fontSize: 11),
+                      ),
+              ),
             ],
           ),
         ),
+      ),
       ),
     );
   }

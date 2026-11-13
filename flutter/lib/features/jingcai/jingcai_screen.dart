@@ -7,6 +7,7 @@ import '../../core/network/api_exception.dart';
 import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/match.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/team_logo.dart';
 import '../auth/auth_state.dart';
 import '../common/async_state_pane.dart';
@@ -59,6 +60,13 @@ class JingcaiFilter {
       missingScoreOnly: missingScoreOnly ?? this.missingScoreOnly,
     );
   }
+
+  /// 是否存在生效中的筛选条件，用于筛选按钮角标（JC-01）
+  bool get hasActive =>
+      keyword.trim().isNotEmpty ||
+      matchDate != null ||
+      (status != null && status!.isNotEmpty) ||
+      missingScoreOnly;
 }
 
 class JingcaiFilterNotifier extends Notifier<JingcaiFilter> {
@@ -153,6 +161,7 @@ class _JingcaiScreenState extends ConsumerState<JingcaiScreen> {
   late final TextEditingController _keywordCtrl;
   late final ScrollController _scrollCtrl;
   bool _filtersOpen = false;
+  bool _disclaimerExpanded = false;
 
   @override
   void initState() {
@@ -189,28 +198,70 @@ class _JingcaiScreenState extends ConsumerState<JingcaiScreen> {
         title: const Text('竞彩分析'),
         actions: [
           IconButton(
+            tooltip: '我的模拟投注',
+            onPressed: () => context.push('/bets'),
+            icon: const Icon(Icons.receipt_long),
+          ),
+          IconButton(
             tooltip: '筛选',
             onPressed: () => setState(() => _filtersOpen = !_filtersOpen),
-            icon: Icon(
-              _filtersOpen ? Icons.filter_alt : Icons.filter_alt_outlined,
+            // 筛选生效时显示角标，提示有条件在起作用（JC-01）
+            icon: Badge(
+              isLabelVisible: filter.hasActive,
+              child: Icon(
+                _filtersOpen ? Icons.filter_alt : Icons.filter_alt_outlined,
+              ),
             ),
           ),
         ],
       ),
       body: !auth.canJingcai
-          ? const AsyncStatePane.empty(
+          ? AsyncStatePane.empty(
               message: '当前账号无竞彩分析权限。请联系管理员开通 match:jingcai_bf 等相关权限。',
+              // 空态给出可操作出口，而非一句提示（JC-02）
+              action: TextButton.icon(
+                onPressed: () => context.push('/about'),
+                icon: const Icon(Icons.info_outline, size: 18),
+                label: const Text('查看关于与权限说明'),
+              ),
             )
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Text(
-                    AppConfig.disclaimer,
-                    style: const TextStyle(
-                      color: AppColors.textMuted,
-                      fontSize: 12,
-                      height: 1.35,
+                // 免责声明默认收起为一行，点按展开全文（JC-03）
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () =>
+                      setState(() => _disclaimerExpanded = !_disclaimerExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          _disclaimerExpanded
+                              ? Icons.expand_less
+                              : Icons.info_outline,
+                          size: 14,
+                          color: AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _disclaimerExpanded
+                                ? AppConfig.disclaimer
+                                : '仅供学习研究与数据分析，不构成任何投注建议。点按查看完整声明',
+                            maxLines: _disclaimerExpanded ? null : 2,
+                            overflow: _disclaimerExpanded
+                                ? TextOverflow.visible
+                                : TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                              height: 1.35,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -268,8 +319,7 @@ class _JingcaiScreenState extends ConsumerState<JingcaiScreen> {
                   ),
                 Expanded(
                   child: asyncList.when(
-                    loading: () =>
-                        const Center(child: CircularProgressIndicator()),
+                    loading: () => const SkeletonList(count: 6),
                     error: (e, _) {
                       if (e is ApiException && e.isForbidden) {
                         return AsyncStatePane.error(
@@ -344,7 +394,7 @@ class _JingcaiScreenState extends ConsumerState<JingcaiScreen> {
                             final m = page.matches[matchIndex];
                             return _JingcaiCard(
                               match: m,
-                              onTap: () => context.push('/matches/${m.id}'),
+                              onTap: () => context.push('/match/${m.id}'),
                             );
                           },
                         ),

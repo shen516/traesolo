@@ -24,6 +24,9 @@ _ODDS_KEYS = (
     "odds_spf_win",
     "odds_spf_draw",
     "odds_spf_lose",
+    "odds_hspf_win",
+    "odds_hspf_draw",
+    "odds_hspf_lose",
 )
 
 
@@ -135,7 +138,11 @@ def _write_snapshot(db: Session, match, new_data: dict, bf_text: Optional[str], 
         odds_spf_win=field("odds_spf_win"),
         odds_spf_draw=field("odds_spf_draw"),
         odds_spf_lose=field("odds_spf_lose"),
+        odds_hspf_win=field("odds_hspf_win"),
+        odds_hspf_draw=field("odds_hspf_draw"),
+        odds_hspf_lose=field("odds_hspf_lose"),
         odds_bf_json=bf_text,
+        odds_hh_json=normalize_bf_json(_obj_get(new_data, "odds_hh_json")),
     )
     db.add(snap)
     return True
@@ -156,13 +163,15 @@ def maybe_snapshot_odds(
     """
     new_vals = odds_tuple_from_obj(new_data)
     new_bf = normalize_bf_json(_obj_get(new_data, "odds_bf_json"))
-    if not has_any_odds(new_vals) and new_bf is None:
+    new_hh = normalize_bf_json(_obj_get(new_data, "odds_hh_json"))
+    if not has_any_odds(new_vals) and new_bf is None and new_hh is None:
         return False
     old_vals = odds_tuple_from_obj(match)
     old_bf = normalize_bf_json(getattr(match, "odds_bf_json", None))
     odds_changed = has_any_odds(new_vals) and old_vals != new_vals
     bf_changed = new_bf is not None and new_bf != old_bf
-    if not odds_changed and not bf_changed:
+    hh_changed = new_hh is not None and new_hh != normalize_bf_json(getattr(match, "odds_hh_json", None))
+    if not odds_changed and not bf_changed and not hh_changed:
         if new_bf is None or not _before_kickoff(match, now) or _has_bf_snapshot(db, getattr(match, "id", None)):
             return False
     stored_bf = new_bf if new_bf is not None else old_bf
@@ -225,6 +234,7 @@ def list_snapshots(db: Session, match_id: str, limit: int = 50) -> list:
     out = []
     for r in rows:
         bf_text = normalize_bf_json(r.odds_bf_json)
+        hh_text = normalize_bf_json(r.odds_hh_json)
         out.append({
             "id": r.id,
             "match_id": r.match_id,
@@ -238,6 +248,10 @@ def list_snapshots(db: Session, match_id: str, limit: int = 50) -> list:
             "odds_spf_win": float(r.odds_spf_win) if r.odds_spf_win is not None else None,
             "odds_spf_draw": float(r.odds_spf_draw) if r.odds_spf_draw is not None else None,
             "odds_spf_lose": float(r.odds_spf_lose) if r.odds_spf_lose is not None else None,
+            "odds_hspf_win": float(r.odds_hspf_win) if r.odds_hspf_win is not None else None,
+            "odds_hspf_draw": float(r.odds_hspf_draw) if r.odds_hspf_draw is not None else None,
+            "odds_hspf_lose": float(r.odds_hspf_lose) if r.odds_hspf_lose is not None else None,
             "odds_bf": json.loads(bf_text) if bf_text else None,
+            "odds_hh": json.loads(hh_text) if hh_text else None,
         })
     return out

@@ -4,11 +4,13 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/config.dart';
 import '../../core/theme.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/team_logo.dart';
 import '../auth/auth_state.dart';
 import '../common/async_state_pane.dart';
 import '../data/data_screen.dart';
 import '../follows/follow_providers.dart';
+import 'today_matches.dart';
 
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
@@ -22,7 +24,10 @@ class HomeScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('首页')),
       body: RefreshIndicator(
-        onRefresh: () async => ref.invalidate(followSummaryProvider),
+        onRefresh: () async {
+          ref.invalidate(followSummaryProvider);
+          ref.invalidate(todayMatchesProvider);
+        },
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -60,41 +65,47 @@ class HomeScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 12),
+            TodayMatchesCard(onMore: () => context.go('/matches')),
+            const SizedBox(height: 12),
+            // 快捷入口仅保留底部导航之外的页面，避免与 Tab 重复（HOME-01）
             Row(
               children: [
                 Expanded(
                   child: _QuickTile(
-                    icon: Icons.sports_soccer,
+                    icon: Icons.receipt_long,
                     color: AppColors.blue,
-                    title: '赛事',
-                    onTap: () => context.go('/matches'),
+                    title: '我的投注',
+                    onTap: () => context.push('/bets'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: _QuickTile(
-                    icon: Icons.table_chart_outlined,
+                    icon: Icons.lock_outline,
                     color: AppColors.gold,
-                    title: '数据',
-                    onTap: () => context.go('/data'),
+                    title: '修改密码',
+                    onTap: () => context.push('/change-password'),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: _QuickTile(
-                    icon: Icons.analytics_outlined,
+                    icon: Icons.info_outline,
                     color: AppColors.green,
-                    title: '竞彩',
-                    onTap: () => context.go('/jingcai'),
+                    title: '关于',
+                    onTap: () => context.push('/about'),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 16),
             summaryAsync.when(
-              loading: () => const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: CircularProgressIndicator()),
+              loading: () => const Column(
+                children: [
+                  SkeletonCard(height: 110),
+                  SizedBox(height: 10),
+                  SkeletonCard(height: 110),
+                ],
               ),
               error: (e, _) => AsyncStatePane.error(
                 error: e,
@@ -214,7 +225,7 @@ class HomeScreen extends ConsumerWidget {
                                 ),
                               ),
                               trailing: const Icon(Icons.chevron_right),
-                              onTap: () => context.push('/matches/${m.id}'),
+                              onTap: () => context.push('/match/${m.id}'),
                             ),
                           ),
                         ),
@@ -231,68 +242,87 @@ class HomeScreen extends ConsumerWidget {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(14),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    board.leagueName,
-                                    style: const TextStyle(fontWeight: FontWeight.w600),
-                                  ),
-                                  if (board.season != null) ...[
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      board.season!,
-                                      style: const TextStyle(
-                                        color: AppColors.textMuted,
-                                        fontSize: 12,
-                                      ),
+                            // 整卡可点进入完整积分榜，替代每张卡片内的按钮（HOME-03）
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: () {
+                                ref
+                                    .read(selectedLeagueIdProvider.notifier)
+                                    .setId(board.leagueId);
+                                context.go('/data');
+                              },
+                              child: Padding(
+                                padding: const EdgeInsets.all(14),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            board.leagueName,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                        const Icon(
+                                          Icons.chevron_right,
+                                          size: 18,
+                                          color: AppColors.textMuted,
+                                        ),
+                                      ],
                                     ),
-                                  ],
-                                  const SizedBox(height: 8),
-                                  if (top.isEmpty)
-                                    const Text(
-                                      '暂无积分榜',
-                                      style: TextStyle(color: AppColors.textMuted),
-                                    )
-                                  else
-                                    ...top.map(
-                                      (row) => Padding(
-                                        padding: const EdgeInsets.only(bottom: 4),
-                                        child: Row(
-                                          children: [
-                                            SizedBox(
-                                              width: 24,
-                                              child: Text(
-                                                '${row.rank}',
-                                                style: const TextStyle(
-                                                  color: AppColors.textMuted,
-                                                ),
-                                              ),
-                                            ),
-                                            Expanded(child: Text(row.displayName)),
-                                            Text(
-                                              '${row.points}分',
-                                              style: const TextStyle(color: AppColors.gold),
-                                            ),
-                                          ],
+                                    if (board.season != null) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        board.season!,
+                                        style: const TextStyle(
+                                          color: AppColors.textMuted,
+                                          fontSize: 12,
                                         ),
                                       ),
-                                    ),
-                                  Align(
-                                    alignment: Alignment.centerRight,
-                                    child: TextButton(
-                                      onPressed: () {
-                                        ref
-                                            .read(selectedLeagueIdProvider.notifier)
-                                            .setId(board.leagueId);
-                                        context.go('/data');
-                                      },
-                                      child: const Text('查看完整'),
-                                    ),
-                                  ),
-                                ],
+                                    ],
+                                    const SizedBox(height: 8),
+                                    if (top.isEmpty)
+                                      const Text(
+                                        '暂无积分榜',
+                                        style: TextStyle(
+                                          color: AppColors.textMuted,
+                                        ),
+                                      )
+                                    else
+                                      ...top.map(
+                                        (row) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 4,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              SizedBox(
+                                                width: 24,
+                                                child: Text(
+                                                  '${row.rank}',
+                                                  style: const TextStyle(
+                                                    color: AppColors.textMuted,
+                                                  ),
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: Text(row.displayName),
+                                              ),
+                                              Text(
+                                                '${row.points}分',
+                                                style: const TextStyle(
+                                                  color: AppColors.gold,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -325,18 +355,22 @@ class _QuickTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            children: [
-              Icon(icon, color: color),
-              const SizedBox(height: 8),
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-            ],
+    return Semantics(
+      button: true,
+      label: '$title 入口',
+      child: Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Column(
+              children: [
+                Icon(icon, color: color),
+                const SizedBox(height: 8),
+                Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+              ],
+            ),
           ),
         ),
       ),

@@ -169,6 +169,21 @@ def _tg_probs(mc: Dict[str, Any]) -> Dict[str, float]:
     return probs
 
 
+def _hspf_probs(mc: Dict[str, Any]) -> Dict[str, float]:
+    """半场胜平负三选一概率：直接读 mc.hspf_probs（由半场泊松 λ≈0.45λ 模拟聚合）。"""
+    hspf = mc.get("hspf_probs") or {}
+    win = _f(hspf.get("win"))
+    draw = _f(hspf.get("draw"))
+    lose = _f(hspf.get("lose"))
+    if win is None or draw is None or lose is None:
+        # 兜底：半场平局概率显著高于全场，近似 1/3 均分
+        return {"win": _round4(1 / 3), "draw": _round4(1 / 3), "lose": _round4(1 / 3)}
+    total = win + draw + lose
+    if total <= 0:
+        return {"win": _round4(1 / 3), "draw": _round4(1 / 3), "lose": _round4(1 / 3)}
+    return {"win": _round4(win / total), "draw": _round4(draw / total), "lose": _round4(lose / total)}
+
+
 def _option_block(probs: Dict[str, float], sp: Dict[str, float]) -> Dict[str, Any]:
     """通用：全量模型概率 + 可用选项的 SP / 隐含概率 / EV / 价值标记 / 单注奖金。"""
     implied = _implied_from_sp(sp)
@@ -193,16 +208,58 @@ def _resolve_sp(
     overround: float,
     real_source: str,
 ) -> tuple:
-    """返回 (sp, source)。手动 > 按模式选真实/合成。"""
+    """返回 (sp, overall_source, option_sources)。
+
+    选项级解析：手动覆盖的选项用手动值；未被手动覆盖/真实缺失的选项用合成兜底。
+    overall_source（玩法级粗粒度，兼容既有语义）：
+        有手动覆盖→'manual'；否则有真实→real_source；否则→'synthetic'。
+    option_sources（选项级精确）：{option: 'manual'|'synthetic'|real_source}，供前端行内提示。
+    """
+    synth = _synthetic_sp(probs, overround)
+
+    def _overall(has_manual: bool, has_real: bool) -> str:
+        if has_manual:
+            return "manual"
+        if has_real:
+            return real_source
+        return "synthetic"
+
     if manual_sp:
         cleaned = {k: v for k, v in manual_sp.items() if _f(v) is not None}
         if cleaned:
-            return {k: _round2(_f(v)) for k, v in cleaned.items()}, "manual"
+            sp, src = {}, {}
+            has_manual = has_real = False
+            for k in probs:
+                if k in cleaned:
+                    sp[k] = _round2(_f(cleaned[k]))
+                    src[k] = "manual"
+                    has_manual = True
+                elif sp_mode == "synthetic" or not real_sp or k not in real_sp or _f(real_sp[k]) is None:
+                    sp[k] = synth[k]
+                    src[k] = "synthetic"
+                else:
+                    sp[k] = _round2(_f(real_sp[k]))
+                    src[k] = real_source
+                    has_real = True
+            return sp, _overall(has_manual, has_real), src
+
     if sp_mode == "synthetic":
-        return _synthetic_sp(probs, overround), "synthetic"
+        src = {k: "synthetic" for k in synth}
+        return synth, "synthetic", src
     if real_sp:
-        return {k: _round2(v) for k, v in real_sp.items()}, real_source
-    return _synthetic_sp(probs, overround), "synthetic"
+        sp, src = {}, {}
+        has_real = False
+        for k in probs:
+            if k in real_sp and _f(real_sp[k]) is not None:
+                sp[k] = _round2(_f(real_sp[k]))
+                src[k] = real_source
+                has_real = True
+            else:
+                sp[k] = synth[k]
+                src[k] = "synthetic"
+        return sp, _overall(False, has_real), src
+    src = {k: "synthetic" for k in synth}
+    return synth, "synthetic", src
 
 
 def calculate_prize(
@@ -246,6 +303,16 @@ def calculate_prize(
             return None
         return _parse_bf_json(getattr(row, "odds_bf_json", None))
 
+    def _hspf(row) -> Optional[Dict[str, float]]:
+        if row is None:
+            return None
+        w = _f(getattr(row, "odds_hspf_win", None))
+        d = _f(getattr(row, "odds_hspf_draw", None))
+        l = _f(getattr(row, "odds_hspf_lose", None))
+        if w and d and l:
+            return {"win": w, "draw": d, "lose": l}
+        return None
+
     spf_real, spf_source_real = _spf(snapshot), "snapshot"
     if spf_real is None:
         spf_real, spf_source_real = _spf(match), "real"
@@ -255,6 +322,9 @@ def calculate_prize(
     bf_real, bf_source_real = _bf(snapshot), "snapshot"
     if bf_real is None:
         bf_real, bf_source_real = _bf(match), "real"
+    hspf_real, hspf_source_real = _hspf(snapshot), "snapshot"
+    if hspf_real is None:
+        hspf_real, hspf_source_real = _hspf(match), "real"
 
     # --- 各玩法概率 ---
     spf_probs = _three_way_probs(mc_detailed)
@@ -264,23 +334,28 @@ def calculate_prize(
     nspf_probs = _nspf_probs(mc_detailed.get("score_matrix") or [], hc)
     bf_probs = _bf_probs(mc_detailed)
     tg_probs = _tg_probs(mc_detailed)
+    hspf_probs = _hspf_probs(mc_detailed)
 
     # --- SP 解析 ---
-    spf_sp, spf_src = _resolve_sp(
+    spf_sp, spf_src, spf_optsrc = _resolve_sp(
         probs=spf_probs, real_sp=spf_real, manual_sp=manual_sp.get("spf"),
         sp_mode=sp_mode, overround=overround, real_source=spf_source_real,
     )
-    nspf_sp, nspf_src = _resolve_sp(
+    nspf_sp, nspf_src, nspf_optsrc = _resolve_sp(
         probs=nspf_probs, real_sp=nspf_real, manual_sp=manual_sp.get("nspf"),
         sp_mode=sp_mode, overround=overround, real_source=nspf_source_real,
     )
-    bf_sp, bf_src = _resolve_sp(
+    bf_sp, bf_src, bf_optsrc = _resolve_sp(
         probs=bf_probs, real_sp=bf_real, manual_sp=manual_sp.get("bf"),
         sp_mode=sp_mode, overround=overround, real_source=bf_source_real,
     )
-    tg_sp, tg_src = _resolve_sp(
+    tg_sp, tg_src, tg_optsrc = _resolve_sp(
         probs=tg_probs, real_sp=None, manual_sp=manual_sp.get("tg"),
         sp_mode=sp_mode, overround=overround, real_source="real",
+    )
+    hspf_sp, hspf_src, hspf_optsrc = _resolve_sp(
+        probs=hspf_probs, real_sp=hspf_real, manual_sp=manual_sp.get("hspf"),
+        sp_mode=sp_mode, overround=overround, real_source=hspf_source_real,
     )
 
     spf_block = _option_block(spf_probs, spf_sp)
@@ -288,6 +363,7 @@ def calculate_prize(
     nspf_block["handicap"] = hc
     nspf_block["handicap_source"] = hc_source
     tg_block = _option_block(tg_probs, tg_sp)
+    hspf_block = _option_block(hspf_probs, hspf_sp)
 
     # 比分：全量 31 项 + Top5 价值
     bf_block = _option_block(bf_probs, bf_sp)
@@ -302,6 +378,7 @@ def calculate_prize(
                 "edge": _round4(bf_probs.get(k, 0) - implied_bf.get(k, 0)),
             }
             for k in bf_sp
+            if bf_optsrc.get(k) != "synthetic"  # 仅真实 SP 选项参与价值推荐，合成值不作为依据
         ),
         key=lambda x: x["ev"],
         reverse=True,
@@ -309,13 +386,17 @@ def calculate_prize(
     bf_block["top_value"] = top_value
 
     return {
-        "sp_source": {"spf": spf_src, "nspf": nspf_src, "bf": bf_src, "tg": tg_src},
+        "sp_source": {"spf": spf_src, "nspf": nspf_src, "bf": bf_src, "tg": tg_src, "hspf": hspf_src},
+        "sp_source_detail": {
+            "spf": spf_optsrc, "nspf": nspf_optsrc, "bf": bf_optsrc, "tg": tg_optsrc, "hspf": hspf_optsrc,
+        },
         "snapshot_at": snapshot_at,
         "overround": _round2(overround),
         "spf": spf_block,
         "nspf": nspf_block,
         "bf": bf_block,
         "tg": tg_block,
+        "hspf": hspf_block,
         "parlay": {
             "enabled": False,
             "note": "串关需多场赛事，当前为单场模拟，串关功能在批量模拟中支持",

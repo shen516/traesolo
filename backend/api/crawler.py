@@ -475,6 +475,105 @@ async def run_live_jingcai_schedule_now():
     return _dispatch_scheduled("live_jingcai_crawl", "竞彩比分采集已入队")
 
 
+# ===== 竞彩全玩法（trade.500.com 混合过关 + 进球数） =====
+
+@router.post("/jingcai-trade/run")
+async def run_jingcai_trade_crawl(
+    days_ahead: int = Query(7, ge=1, le=14, description="向前采集天数"),
+):
+    """手动触发竞彩全玩法 SP 采集（分析用，非投注建议；入队后立即返回）。"""
+    return _enqueue_manual(
+        "竞彩全玩法采集已入队",
+        "crawl_jingcai_trade_all",
+        days_ahead=days_ahead,
+        crawl_type="manual",
+    )
+
+
+@router.post("/jingcai-trade/schedule/enable")
+async def enable_jingcai_trade_schedule(
+    interval_minutes: int = Query(30, ge=5, description="采集间隔（分钟），默认30分钟"),
+):
+    scheduler.add_interval_task(
+        "jingcai_trade_all_crawl", crawler_service.crawl_jingcai_trade_all, interval_minutes
+    )
+    if not scheduler.is_running():
+        scheduler.start()
+    return {"message": f"竞彩全玩法定时采集已启用，每{interval_minutes}分钟执行一次"}
+
+
+@router.post("/jingcai-trade/schedule/disable")
+async def disable_jingcai_trade_schedule():
+    scheduler.remove_task("jingcai_trade_all_crawl")
+    return {"message": "竞彩全玩法定时采集已禁用"}
+
+
+@router.post("/jingcai-trade/schedule/run-now")
+async def run_jingcai_trade_schedule_now():
+    return _dispatch_scheduled("jingcai_trade_all_crawl", "竞彩全玩法采集已入队")
+
+
+@router.post("/jingcai-trade-poll/schedule/enable")
+async def enable_jingcai_trade_poll_schedule(
+    interval_minutes: int = Query(5, ge=5, description="轮询间隔（分钟），默认5分钟"),
+):
+    scheduler.add_interval_task(
+        "jingcai_trade_poll", crawler_service.crawl_jingcai_trade_poll, interval_minutes
+    )
+    if not scheduler.is_running():
+        scheduler.start()
+    return {"message": f"竞彩全玩法临场轮询已启用，每{interval_minutes}分钟执行一次"}
+
+
+@router.post("/jingcai-trade-poll/schedule/disable")
+async def disable_jingcai_trade_poll_schedule():
+    scheduler.remove_task("jingcai_trade_poll")
+    return {"message": "竞彩全玩法临场轮询已禁用"}
+
+
+@router.post("/jingcai-trade-poll/schedule/run-now")
+async def run_jingcai_trade_poll_schedule_now():
+    return _dispatch_scheduled("jingcai_trade_poll", "竞彩全玩法临场轮询已入队")
+
+
+@router.post("/jingcai-trade-history/run")
+async def run_jingcai_trade_history_crawl(
+    days_back: int = Query(30, ge=1, le=60, description="向后回补天数"),
+):
+    """手动触发竞彩全玩法历史回补（赛果对照；分析用，非投注建议；入队后立即返回）。"""
+    return _enqueue_manual(
+        "竞彩全玩法历史回补已入队",
+        "crawl_jingcai_trade_history",
+        days_back=days_back,
+        crawl_type="manual",
+    )
+
+
+@router.post("/jingcai-trade-history/schedule/enable")
+async def enable_jingcai_trade_history_schedule(
+    interval_minutes: int = Query(360, ge=30, description="回补间隔（分钟），默认6小时"),
+):
+    scheduler.add_interval_task(
+        "jingcai_trade_history", crawler_service.crawl_jingcai_trade_history, interval_minutes
+    )
+    if not scheduler.is_running():
+        scheduler.start()
+    return {"message": f"竞彩全玩法历史回补已启用，每{interval_minutes}分钟执行一次"}
+
+
+@router.post("/jingcai-trade-history/schedule/disable")
+async def disable_jingcai_trade_history_schedule():
+    scheduler.remove_task("jingcai_trade_history")
+    return {"message": "竞彩全玩法历史回补已禁用"}
+
+
+@router.post("/jingcai-trade-history/schedule/run-now")
+async def run_jingcai_trade_history_schedule_now(
+    days_back: int = Query(30, ge=1, le=60, description="向后回补天数"),
+):
+    return _dispatch_scheduled("jingcai_trade_history", "竞彩全玩法历史回补已入队")
+
+
 @router.post("/leagues/run")
 async def run_league_crawl():
     """手动触发联赛数据采集（入队后立即返回）"""

@@ -43,7 +43,7 @@
 3. **模拟预测只读**：`simulation_service.py` / `simulate` 接口不得写入 `predictions` 表（只落 `simulation_history`）。
 4. **Windows + OpenBLAS**：大规模蒙特卡洛模拟（≥50k）需 `OPENBLAS_NUM_THREADS=1`，否则可能报 "OpenBLAS: memory allocation" 崩溃。
 5. **Python ≥ 3.12**（requirements.txt 与 Dockerfile 一致）；**Pydantic V2**，禁用已弃用 API（`tests/test_pydantic_v2.py` 有守卫）。
-6. **测试基线**：当前 `248 passed, 1 skipped`。改后端必须跑全量测试；新增功能配测试（`tests/conftest.py` 提供 `client` / `admin_token` fixture）。
+6. **测试基线**：当前 `314 passed, 1 skipped`（2026-11-13 实测）。改后端必须跑全量测试；新增功能配测试（`tests/conftest.py` 提供 `client` / `admin_token` fixture）。
 7. **前端 lint**：日常 `--max-warnings 50`，CI `lint:ci` 为 0；改动文件需过 eslint。
 
 ## 权威文档（改对应域前先读）
@@ -52,5 +52,5 @@
 - 代码风格：`DOC/代码规范.md`
 - 算法与场景：`DOC/竞彩赔率分析算法.md`、`DOC/预测分析场景规则.md`
 - 部署：`DOC/部署与工作流文档.md`、`DOC/阿里云Linux部署环境与命令.md`
-- **优化与后续规划（改动前必读）**：`DOC/2026-11-04 后续功能开发与改进规划.md`、`DOC/2026-10-30 项目优化改进方案.md`、`DOC/2026-10-26 安全与维护待办清单.md`
+- **优化与后续规划（改动前必读）**：`DOC/2026-11-13 未完成事项整合清单.md`（待办唯一入口）、`DOC/2026-11-13 开发计划.md`（M0~M5 阶段与验收门禁）；历史规划文档归档于 `DOC/归档/`
 - 领域 Skill：`.cursor/skills/traesolo-football-quant`（通用）、`traesolo-model-training`（训练/融合）、`traesolo-data-crawler`（采集/调度）

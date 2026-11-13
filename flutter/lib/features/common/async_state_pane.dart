@@ -9,18 +9,21 @@ class AsyncStatePane extends StatelessWidget {
     required this.error,
     required this.onRetry,
   })  : message = null,
+        action = null,
         empty = false;
 
   const AsyncStatePane.empty({
     super.key,
     required this.message,
     this.onRetry,
+    this.action,
   })  : error = null,
         empty = true;
 
   final Object? error;
   final String? message;
   final VoidCallback? onRetry;
+  final Widget? action;
   final bool empty;
 
   static String describeError(Object? error) {
@@ -75,6 +78,10 @@ class AsyncStatePane extends StatelessWidget {
                 onPressed: onRetry,
                 child: Text(empty ? '刷新' : '重试'),
               ),
+            ],
+            if (action != null) ...[
+              const SizedBox(height: 8),
+              action!,
             ],
           ],
         ),

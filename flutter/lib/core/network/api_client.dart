@@ -92,12 +92,14 @@ class ApiClient {
     Map<String, dynamic>? queryParameters,
     T Function(dynamic data)? parser,
     Duration? receiveTimeout,
+    CancelToken? cancelToken,
   }) async {
     try {
       final res = await _dio.post<dynamic>(
         path,
         data: data,
         queryParameters: queryParameters,
+        cancelToken: cancelToken,
         options: receiveTimeout == null
             ? null
             : Options(receiveTimeout: receiveTimeout),
@@ -106,6 +108,8 @@ class ApiClient {
       if (parser != null) return parser(body);
       return body as T;
     } on DioException catch (e) {
+      // 用户主动取消：保持 DioException 原样抛出，交由调用方静默处理
+      if (e.type == DioExceptionType.cancel) rethrow;
       throw _unwrap(e);
     }
   }

@@ -322,6 +322,8 @@ class CrawlerService:
                             'odds_nspf_win', 'odds_nspf_draw', 'odds_nspf_lose',
                             'odds_spf_win', 'odds_spf_draw', 'odds_spf_lose',
                             'odds_bf_json',
+                            'odds_hh_json',
+                            'odds_hspf_win', 'odds_hspf_draw', 'odds_hspf_lose',
                             'is_single', 'buy_end_time', 'round_name',
                             'status', 'home_goals', 'away_goals', 'result',
                             'match_date', 'match_time',
@@ -392,6 +394,8 @@ class CrawlerService:
                     'odds_nspf_win', 'odds_nspf_draw', 'odds_nspf_lose',
                     'odds_spf_win', 'odds_spf_draw', 'odds_spf_lose',
                     'odds_bf_json',
+                    'odds_hh_json',
+                    'odds_hspf_win', 'odds_hspf_draw', 'odds_hspf_lose',
                     'is_single', 'buy_end_time',
                     'half_score', 'match_no', 'source',
                 ]}
@@ -417,6 +421,8 @@ class CrawlerService:
                         'odds_nspf_win', 'odds_nspf_draw', 'odds_nspf_lose',
                         'odds_spf_win', 'odds_spf_draw', 'odds_spf_lose',
                         'odds_bf_json',
+                        'odds_hh_json',
+                        'odds_hspf_win', 'odds_hspf_draw', 'odds_hspf_lose',
                         'is_single', 'buy_end_time',
                         'half_score', 'match_no', 'source',
                         'venue', 'weather', 'temperature', 'pitch_condition',
@@ -656,6 +662,237 @@ class CrawlerService:
                 "duration_ms": duration_ms,
             }
 
+    def crawl_jingcai_hh_odds(self, days_ahead: int = 7, days_back: int = 0, crawl_type: str = "scheduled") -> Dict:
+        """爬取 trade.500.com/jczq 半全场页（playid=272）9 项真实 SP 并入库。
+
+        半场三选一（hspf）无官方独立产品，由 9 项边际推导，来源 500_trade_hh。
+        """
+        start_time = datetime.now()
+        is_history = int(days_back or 0) > 0 and int(days_ahead or 0) == 0
+        log_name = "竞彩半全场" if not is_history else "竞彩半全场历史"
+        if not self._real_crawler:
+            return {"status": "failed", "error": "竞彩采集器未加载", "found_count": 0, "saved_count": 0}
+        try:
+            raw = self._real_crawler._crawl_jczq_hh(days_ahead=days_ahead, days_back=days_back)
+            saved, updated = self._save_matches(raw)
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            status = "success"
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=len(raw),
+                saved_count=saved,
+                updated_count=updated,
+                status=status,
+                crawled_data=json.dumps(
+                    {
+                        "source": "https://trade.500.com/jczq/?playid=272&g=2",
+                        "days_ahead": days_ahead,
+                        "days_back": days_back,
+                    },
+                    ensure_ascii=False,
+                ),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": status,
+                "found_count": len(raw),
+                "saved_count": saved,
+                "updated_count": updated,
+                "duration_ms": duration_ms,
+                "disclaimer": "仅供分析，不构成投注建议",
+            }
+        except Exception as e:
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            logger.error("crawl_jingcai_hh_odds failed: %s", e)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=0,
+                saved_count=0,
+                status="failed",
+                error_message=str(e),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "failed",
+                "error": str(e),
+                "found_count": 0,
+                "saved_count": 0,
+                "duration_ms": duration_ms,
+            }
+
+    def crawl_jingcai_trade_all(self, days_ahead: int = 7, crawl_type: str = "scheduled") -> Dict:
+        """采集竞彩足球全玩法 SP（单关/胜平负让球/混合过关/比分/进球数/半全场）。
+
+        以 500 侧主键 process_id+process_date 落 jingcai_match_odds 表（只读分析，非投注建议）。
+        混合过关页单页抓全，进球数独立页补齐。
+        """
+        start_time = datetime.now()
+        log_name = "竞彩全玩法"
+        try:
+            from .jingcai_trade_crawler import JingcaiTradeCrawler
+            from .jingcai_trade_service import upsert_crawl_result
+
+            db = SessionLocal()
+            crawler = JingcaiTradeCrawler()
+            rows = crawler.crawl(days_ahead=days_ahead)
+            stats = upsert_crawl_result(db, rows)
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=len(rows),
+                saved_count=stats.get("inserted", 0),
+                updated_count=stats.get("updated", 0),
+                status="success",
+                crawled_data=json.dumps(
+                    {
+                        "source": "https://trade.500.com/jczq/?playid=312&g=2",
+                        "days_ahead": days_ahead,
+                        "plays": ["dg", "spf", "hhgg", "bf", "jqs", "bqc"],
+                    },
+                    ensure_ascii=False,
+                ),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "success",
+                "found_count": len(rows),
+                "saved_count": stats.get("inserted", 0),
+                "updated_count": stats.get("updated", 0),
+                "duration_ms": duration_ms,
+                "disclaimer": "仅供分析，不构成投注建议",
+            }
+        except Exception as e:
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            logger.error("crawl_jingcai_trade_all failed: %s", e)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=0,
+                saved_count=0,
+                status="failed",
+                error_message=str(e),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "failed",
+                "error": str(e),
+                "found_count": 0,
+                "saved_count": 0,
+                "duration_ms": duration_ms,
+            }
+
+    def crawl_jingcai_trade_poll(self, crawl_type: str = "scheduled") -> Dict:
+        """竞彩全玩法轻量轮询：临近开赛或已开赛/完赛缺赛果时才真正抓取。
+
+        低成本：先检查 DB 中是否有「值得刷新」的场次（距封盘/开赛 ≤60 分钟，
+        或已开赛/完赛但缺赛果），无则直接返回 skipped，避免高频抓取。
+        """
+        start_time = datetime.now()
+        log_name = "竞彩全玩法轮询"
+        try:
+            from .jingcai_trade_crawler import JingcaiTradeCrawler
+            from .jingcai_trade_service import (
+                refresh_trigger_required,
+                upsert_crawl_result,
+                detect_sp_changes,
+            )
+
+            db = SessionLocal()
+            if not refresh_trigger_required(db):
+                db.close()
+                return {
+                    "status": "skipped",
+                    "message": "无临近开赛或待回补赛果场次",
+                    "disclaimer": "仅供分析，不构成投注建议",
+                }
+
+            crawler = JingcaiTradeCrawler()
+            rows = crawler.crawl(days_ahead=7)
+            # SP 异动监测：先对比 DB 旧值再落库
+            sp = detect_sp_changes(db, rows)
+            stats = upsert_crawl_result(db, rows)
+            db.close()
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=len(rows),
+                saved_count=stats.get("inserted", 0),
+                updated_count=stats.get("updated", 0),
+                status="success",
+                crawled_data=json.dumps(
+                    {"source": "https://trade.500.com/jczq/?playid=312&g=2", "trigger": "near_kickoff_or_pending_result"},
+                    ensure_ascii=False,
+                ),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "success",
+                "found_count": len(rows),
+                "saved_count": stats.get("inserted", 0),
+                "updated_count": stats.get("updated", 0),
+                "sp_changed": sp.get("changed", 0),
+                "sp_alerts": sp.get("alerts", 0),
+                "sp_changes": sp.get("changes", [])[:50],
+                "duration_ms": duration_ms,
+                "disclaimer": "仅供分析，不构成投注建议",
+            }
+        except Exception as e:
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            logger.error("crawl_jingcai_trade_poll failed: %s", e)
+            try:
+                self._save_crawl_log(
+                    crawl_type=crawl_type,
+                    crawl_category="odds",
+                    league_id=None,
+                    league_name=log_name,
+                    found_count=0,
+                    saved_count=0,
+                    status="failed",
+                    error_message=str(e),
+                    started_at=start_time,
+                    finished_at=end_time,
+                    duration_ms=duration_ms,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return {
+                "status": "failed",
+                "error": str(e),
+                "found_count": 0,
+                "saved_count": 0,
+                "duration_ms": duration_ms,
+            }
+
     def crawl_jingcai_bf_history(self, days_back: int = 30, crawl_type: str = "scheduled") -> Dict:
         """回补「竞彩分析」历史比分列表：trade.500.com/jczq?playid=271 历史日期投注区 SP。
 
@@ -666,6 +903,121 @@ class CrawlerService:
             days_back=days_back,
             crawl_type=crawl_type,
         )
+
+    def crawl_jingcai_trade_history(self, days_back: int = 30, crawl_type: str = "scheduled") -> Dict:
+        """历史数据回补：抓取近 days_back 个销售日的全玩法 SP 与赛果，回填 jingcai_match_odds。
+
+        与 crawl_jingcai_trade_all 不同：只向后回补（days_ahead=0），按历史日期逐日抓取
+        混合过关页与进球数页，用于补齐历史销售日数据并回写赛果（分析用，非投注建议）。
+        """
+        start_time = datetime.now()
+        log_name = "竞彩全玩法历史回补"
+        try:
+            from .jingcai_trade_crawler import JingcaiTradeCrawler
+            from .jingcai_trade_service import upsert_crawl_result
+
+            days = max(1, min(int(days_back or 30), 60))
+            db = SessionLocal()
+            crawler = JingcaiTradeCrawler()
+            rows = crawler.crawl(days_ahead=0, days_back=days)
+            stats = upsert_crawl_result(db, rows)
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=len(rows),
+                saved_count=stats.get("inserted", 0),
+                updated_count=stats.get("updated", 0),
+                status="success",
+                crawled_data=json.dumps(
+                    {
+                        "source": "https://trade.500.com/jczq/?playid=312&g=2",
+                        "days_back": days,
+                        "plays": ["dg", "spf", "hhgg", "bf", "jqs", "bqc"],
+                    },
+                    ensure_ascii=False,
+                ),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "success",
+                "found_count": len(rows),
+                "saved_count": stats.get("inserted", 0),
+                "updated_count": stats.get("updated", 0),
+                "days_back": days,
+                "duration_ms": duration_ms,
+                "disclaimer": "仅供分析，不构成投注建议",
+            }
+        except Exception as e:
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            logger.error("crawl_jingcai_trade_history failed: %s", e)
+            self._save_crawl_log(
+                crawl_type=crawl_type,
+                crawl_category="odds",
+                league_id=None,
+                league_name=log_name,
+                found_count=0,
+                saved_count=0,
+                status="failed",
+                error_message=str(e),
+                started_at=start_time,
+                finished_at=end_time,
+                duration_ms=duration_ms,
+            )
+            return {
+                "status": "failed",
+                "error": str(e),
+                "found_count": 0,
+                "saved_count": 0,
+                "duration_ms": duration_ms,
+            }
+
+    def crawl_jingcai_trade_verify(self, days_back: int = 30, crawl_type: str = "manual") -> Dict:
+        """赛果校验：对比 jingcai_match_odds 中已开赛/完赛场次的 result 与开奖数据。
+
+        仅做只读校验并返回统计（不改写 DB），供分析对照（非投注建议）。
+        对缺赛果的场次，可结合 crawl_jingcai_trade_history 先回补再校验。
+        """
+        from .jingcai_trade_service import verify_results
+        from .jingcai_trade_crawler import JingcaiTradeCrawler
+
+        start_time = datetime.now()
+        db = SessionLocal()
+        try:
+            # 先抓取近 N 日赛果用于对照（days_ahead=0, days_back 回补）
+            crawler = JingcaiTradeCrawler()
+            rows = crawler.crawl(days_ahead=0, days_back=days_back)
+            verify = verify_results(db, rows)
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            return {
+                "status": "success",
+                "checked": verify.get("checked", 0),
+                "matched": verify.get("matched", 0),
+                "mismatched": verify.get("mismatched", 0),
+                "missing": verify.get("missing", 0),
+                "updated_result": verify.get("updated_result", 0),
+                "mismatches": verify.get("mismatches", []),
+                "duration_ms": duration_ms,
+                "disclaimer": "仅供分析，不构成投注建议",
+            }
+        except Exception as e:
+            end_time = datetime.now()
+            duration_ms = int((end_time - start_time).total_seconds() * 1000)
+            logger.error("crawl_jingcai_trade_verify failed: %s", e)
+            return {
+                "status": "failed",
+                "error": str(e),
+                "duration_ms": duration_ms,
+            }
+        finally:
+            db.close()
 
     def crawl_jingcai_scores(
         self,

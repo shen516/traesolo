@@ -43,10 +43,23 @@ const passwordForm = ref({ oldPassword: '', newPassword: '' })
 const pwdSaving = ref(false)
 const pwdMsg = ref('')
 
+// 与后端密码策略保持一致：6–128 位
+const PASSWORD_MIN_LEN = 6
+const PASSWORD_MAX_LEN = 128
+
 async function submitPassword() {
   pwdMsg.value = ''
-  if (!passwordForm.value.oldPassword || !passwordForm.value.newPassword) {
+  const { oldPassword, newPassword } = passwordForm.value
+  if (!oldPassword || !newPassword) {
     pwdMsg.value = '请填写当前密码与新密码'
+    return
+  }
+  if (newPassword.length < PASSWORD_MIN_LEN || newPassword.length > PASSWORD_MAX_LEN) {
+    pwdMsg.value = `新密码长度需 ${PASSWORD_MIN_LEN}–${PASSWORD_MAX_LEN} 位`
+    return
+  }
+  if (oldPassword === newPassword) {
+    pwdMsg.value = '新密码不能与当前密码相同'
     return
   }
   pwdSaving.value = true

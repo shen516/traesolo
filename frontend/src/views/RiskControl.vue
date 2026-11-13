@@ -136,22 +136,22 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import echarts from '@/utils/echarts'
 import { CHART_COLORS } from '@/utils/chartTheme'
+import { useEChart } from '@/composables/useEChart'
 import { riskApi } from '@/api'
 import CollapsibleSection from '@/components/common/CollapsibleSection.vue'
 import UpgradeHint from '@/components/UpgradeHint.vue'
 import { useUserStore } from '@/stores/user'
 import { useFollowsStore } from '@/stores/follows'
+import { formatDateTime } from '@/utils/formatters'
 
 const router = useRouter()
 const userStore = useUserStore()
 const followsStore = useFollowsStore()
 const followedOnly = ref(!userStore.isAdmin)
 const pieChartRef = ref(null)
-let pieChart = null
 
 const riskAlerts = ref([])
 const onlyUnprocessed = ref(false)
@@ -190,12 +190,6 @@ function typeIcon(type) {
   return typeIconMap[type] || '⚠️'
 }
 
-function formatDateTime(dt) {
-  if (!dt) return ''
-  const s = String(dt).replace('T', ' ')
-  return s.slice(0, 16)
-}
-
 // 后端 snake_case 字段 -> 前端展示结构
 function normalizeAlert(a) {
   return {
@@ -229,7 +223,7 @@ const paginatedAlerts = computed(() => {
 
 watch(filteredAlerts, () => {
   if (alertPage.value > alertTotalPages.value) alertPage.value = 1
-  nextTick(() => initPieChart())
+  nextTick(() => renderPieChart())
 })
 
 function onUnprocessedToggle() {
@@ -330,10 +324,9 @@ const strategies = [
   }
 ]
 
-function initPieChart() {
-  if (!pieChartRef.value) return
-  if (!pieChart) pieChart = echarts.init(pieChartRef.value)
-  pieChart.setOption({
+// 风险等级分布饼图 option 工厂
+function buildPieChartOption() {
+  return {
     tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
     series: [
       {
@@ -348,12 +341,11 @@ function initPieChart() {
           .map(l => ({ name: l.label, value: l.count, itemStyle: { color: l.color } }))
       }
     ]
-  })
+  }
 }
 
-function handleResize() {
-  pieChart?.resize()
-}
+// 图表实例生命周期（init/setOption/resize/dispose）统一交给 useEChart 管理，render 幂等复用实例
+const { render: renderPieChart } = useEChart(pieChartRef, buildPieChartOption)
 
 async function fetchAlerts(level = currentLevel.value) {
   loading.value = true
@@ -369,7 +361,7 @@ async function fetchAlerts(level = currentLevel.value) {
     const alerts = res?.alerts || res || []
     riskAlerts.value = alerts.map(normalizeAlert)
     await nextTick()
-    initPieChart()
+    renderPieChart()
   } catch (e) {
     error.value = e?.message || '数据加载失败，请检查后端服务'
   } finally {
@@ -384,12 +376,6 @@ async function changeLevel(level) {
 
 onMounted(() => {
   fetchAlerts()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  pieChart?.dispose()
 })
 </script>
 

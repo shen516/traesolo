@@ -36,6 +36,9 @@ class AuthState {
       permissions.contains('simulation:view') ||
       permissions.contains('model:manage');
 
+  /// 模拟投注单创建/作废/手动结算（与后端 RequireModelManage 对齐）
+  bool get canManageModel => permissions.contains('model:manage');
+
   /// 竞彩只读：与 Web Jingcai 页权限大致对齐（后端 RequireMatchRead 更宽）
   bool get canJingcai =>
       permissions.contains('match:jingcai_bf') ||
@@ -102,6 +105,13 @@ class AuthNotifier extends Notifier<AuthState> {
   }
 
   void _bump() => authListenable.value++;
+
+  /// 输入变化时即时清除旧错误，避免上次失败的提示一直残留（LOGIN-05）
+  void clearError() {
+    if (state.error != null) {
+      state = state.copyWith(clearError: true);
+    }
+  }
 
   Future<void> restore() async {
     state = state.copyWith(isLoading: true, clearError: true);

@@ -115,6 +115,26 @@
           </label>
           <label>让球数（留空=赛事让球）<input v-model.number="adv.handicap" type="number" step="1" min="-10" max="10" placeholder="赛事" /></label>
         </div>
+        <div class="adv-group">
+          <div class="adv-group-title">手动 SP 覆盖（留空=自动；填入后优先生效）</div>
+          <label>胜平负 · 胜 <input v-model.number="adv.manualSpfWin" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>胜平负 · 平 <input v-model.number="adv.manualSpfDraw" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>胜平负 · 负 <input v-model.number="adv.manualSpfLose" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>让球 · 胜 <input v-model.number="adv.manualNspfWin" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>让球 · 平 <input v-model.number="adv.manualNspfDraw" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>让球 · 负 <input v-model.number="adv.manualNspfLose" type="number" step="0.1" min="0" placeholder="自动" /></label>
+          <label>总进球 · 0 <input v-model.number="adv.manualTg0" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 1 <input v-model.number="adv.manualTg1" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 2 <input v-model.number="adv.manualTg2" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 3 <input v-model.number="adv.manualTg3" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 4 <input v-model.number="adv.manualTg4" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 5 <input v-model.number="adv.manualTg5" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 6 <input v-model.number="adv.manualTg6" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label>总进球 · 7+ <input v-model.number="adv.manualTg7Plus" type="number" step="0.1" min="0" inputmode="numeric" placeholder="自动" /></label>
+          <label class="adv-full">比分手动 SP（选项级，格式 `1:0=4.5,2:1=8.0,胜其它=15`，留空=自动）
+            <input v-model="adv.manualBfText" type="text" placeholder="如 1:0=4.5,2:1=8.0,胜其它=15" />
+          </label>
+        </div>
         <div class="adv-actions">
           <button class="btn btn-outline btn-sm" @click="resetAdvanced">重置高级选项</button>
         </div>
@@ -235,11 +255,28 @@
         </div>
         <div ref="heatChartRef" class="chart-box tall"></div>
         <div class="top-scores">
-          <div class="top-score-item" v-for="t in (result.simulated.mc && result.simulated.mc.top_scores) || []" :key="t.score">
+          <div
+            class="top-score-item clickable"
+            v-for="t in (result.simulated.mc && result.simulated.mc.top_scores) || []"
+            :key="t.score"
+            :class="{ selected: selectedBfScore === bfKeyOf(t.score) }"
+            @click="selectBfScore(bfKeyOf(t.score))"
+          >
             <span class="score">{{ t.score.replace('-', ':') }}</span>
             <span class="score-prob">{{ pct(t.prob) }}</span>
           </div>
         </div>
+        <div v-if="selectedScoreInfo" class="selected-score-panel">
+          <div class="panel-title">已选比分：{{ selectedScoreInfo.key }}</div>
+          <div class="panel-stats">
+            <span>模型概率 <b>{{ pct(selectedScoreInfo.prob) }}</b></span>
+            <span>SP <b>{{ selectedScoreInfo.sp != null ? fmt(selectedScoreInfo.sp) : '—' }}</b></span>
+            <span>单注参考奖金 <b>{{ selectedScoreInfo.payout != null ? fmt(selectedScoreInfo.payout) + ' 元' : '—' }}</b></span>
+            <span>EV（每2元） <b :class="selectedScoreInfo.ev > 0 ? 'pos' : 'neg'">{{ selectedScoreInfo.ev != null ? fmt(selectedScoreInfo.ev) : '—' }}</b></span>
+          </div>
+          <p class="disclaimer">{{ result.prize.disclaimer }}</p>
+        </div>
+        <div v-else class="score-select-hint">点击热力图单元格或上方比分，可查看该比分的 SP 与参考奖金</div>
       </div>
 
       <!-- 总进球 -->
@@ -261,7 +298,10 @@
           </thead>
           <tbody>
             <tr v-for="row in marketRows" :key="row.key" :class="{ 'value-row': row.value }">
-              <td>{{ row.label }}</td>
+              <td>
+                {{ row.label }}
+                <span v-if="row.synthetic" class="option-synthetic-tag" title="该选项无真实 SP，为合成参考值">合成</span>
+              </td>
               <td>{{ pct(row.prob) }}</td>
               <td>{{ row.sp != null ? fmt(row.sp) : '—' }}</td>
               <td>{{ row.implied != null ? pct(row.implied) : '—' }}</td>
@@ -294,31 +334,122 @@
       <!-- 奖金分析 -->
       <div v-show="activeTab === 'prize'" class="card tab-panel">
         <div class="prize-section" v-for="play in prizePlays" :key="play.key">
+          <div v-if="play.source === '合成'" class="synthetic-banner">
+            ⚠️ 该玩法暂无真实 SP，当前展示为合成参考值（抽水 13%），仅供分析，不构成投注依据
+          </div>
+          <div v-else-if="play.source === '混合'" class="synthetic-banner mixed-banner">
+            ⚠️ 该玩法部分选项无真实 SP，已用合成值兜底（抽水 13%），行内"合成"标记为准
+          </div>
           <div class="prize-title">
             {{ play.label }}
             <span class="prize-src">SP 来源：{{ play.source }}</span>
             <span v-if="play.key === 'nspf'" class="prize-src">让球 {{ play.handicap >= 0 ? '+' : '' }}{{ play.handicap }}</span>
           </div>
-          <table class="data-table compact">
+          <table class="data-table compact" :class="{ 'bf-table': play.key === 'bf' }">
             <thead>
-              <tr><th>选项</th><th>模型概率</th><th>SP</th><th>单注奖金</th><th>EV</th><th>价值</th></tr>
+              <tr>
+                <th>选项</th><th>模型概率</th><th>SP</th>
+                <template v-if="play.key === 'bf'"><th>隐含概率</th><th>单注奖金</th><th>EV</th><th>价值</th><th>选中</th></template>
+                <template v-else><th>单注奖金</th><th>EV</th><th>价值</th></template>
+                <th>串关</th>
+              </tr>
             </thead>
             <tbody>
-              <tr v-for="o in play.options" :key="o.key" :class="{ 'value-row': o.value }">
-                <td>{{ o.label }}</td>
+              <tr
+                v-for="o in play.options" :key="o.key"
+                :class="{
+                  'value-row': o.value,
+                  'bf-row': play.key === 'bf',
+                  selected: (play.key === 'bf' && selectedBfScore === o.key) || (play.key === 'hspf' && selectedHspfKey === o.key),
+                }"
+                @click="play.key === 'bf' ? selectBfScore(o.key) : (play.key === 'hspf' && selectHspf(o.key))"
+              >
+                <td>
+                  {{ o.label }}
+                  <span v-if="o.synthetic" class="option-synthetic-tag" title="该选项无真实 SP，为合成参考值">合成</span>
+                </td>
                 <td>{{ pct(o.prob) }}</td>
                 <td>{{ o.sp != null ? fmt(o.sp) : '—' }}</td>
+                <template v-if="play.key === 'bf'"><td>{{ pct(o.implied) }}</td></template>
                 <td>{{ o.payout != null ? fmt(o.payout) + ' 元' : '—' }}</td>
                 <td :class="o.ev > 0 ? 'pos' : 'neg'">{{ o.ev != null ? fmt(o.ev) : '—' }}</td>
                 <td>{{ o.value ? '★' : '' }}</td>
+                <td v-if="play.key === 'bf'">
+                  <span v-if="selectedBfScore === o.key" class="bf-check">✓</span>
+                </td>
+                <td>
+                  <button
+                    class="btn btn-xs btn-outline parlay-add"
+                    :disabled="!canWrite || !canAddToParlay(play.key, o)"
+                    @click.stop="addToParlay(play.key, o)"
+                  >{{ inParlay(play.key, o) ? '已加入' : '串关' }}</button>
+                </td>
               </tr>
             </tbody>
           </table>
+          <p v-if="play.key === 'bf'" class="bf-hint">点击比分行选中/取消，单选切换</p>
+          <p v-if="play.key === 'hspf'" class="bf-hint">点击半场胜平负选项选中/取消，单选切换</p>
+          <div v-if="play.key === 'hspf' && selectedHspfInfo" class="selected-score-panel bf-selected-summary">
+            <div class="panel-title">已选半场：{{ selectedHspfInfo.key === 'win' ? '主胜' : selectedHspfInfo.key === 'draw' ? '平' : '客胜' }}</div>
+            <div class="sel-grid">
+              <span>模型概率 <b>{{ pct(selectedHspfInfo.prob) }}</b></span>
+              <span>SP <b>{{ selectedHspfInfo.sp != null ? fmt(selectedHspfInfo.sp) : '—' }}</b></span>
+              <span>单注参考奖金 <b>{{ selectedHspfInfo.payout != null ? fmt(selectedHspfInfo.payout) + ' 元' : '—' }}</b></span>
+              <span>EV（每2元） <b :class="selectedHspfInfo.ev > 0 ? 'pos' : 'neg'">{{ selectedHspfInfo.ev != null ? fmt(selectedHspfInfo.ev) : '—' }}</b></span>
+            </div>
+          </div>
+          <div v-if="play.key === 'hspf' && selectedHspfInfo" class="bet-form">
+            <div class="bet-inputs">
+              <label class="bet-field">
+                <span>单注金额（元）</span>
+                <input v-model="betStake" type="number" min="2" step="2" inputmode="decimal" class="filter-input" />
+              </label>
+              <label class="bet-field">
+                <span>倍数</span>
+                <input v-model="betMultiple" type="number" min="1" step="1" inputmode="numeric" class="filter-input" />
+              </label>
+              <div class="bet-total">预计派奖 <b>{{ betPayoutPreview }} 元</b></div>
+            </div>
+            <button class="btn btn-primary bet-submit" :disabled="betSubmitting || !canAddBet" @click="addToBet">
+              {{ betSubmitting ? '提交中...' : (canWrite ? '加入模拟投注单' : '只读（仅管理角色可创建）') }}
+            </button>
+            <p v-if="betError" class="bet-error">{{ betError }}</p>
+            <p v-if="betSuccess" class="bet-success">{{ betSuccess }}</p>
+            <p class="bet-note">模拟数据，仅作学习与研究，不构成投注建议，不接入真实资金</p>
+          </div>
+          <div v-if="play.key === 'bf' && selectedScoreInfo" class="selected-score-panel bf-selected-summary">
+            <div class="panel-title">已选比分：{{ selectedScoreInfo.key }}</div>
+            <div class="sel-grid">
+              <span>模型概率 <b>{{ pct(selectedScoreInfo.prob) }}</b></span>
+              <span>SP <b>{{ selectedScoreInfo.sp != null ? fmt(selectedScoreInfo.sp) : '—' }}</b></span>
+              <span>单注参考奖金 <b>{{ selectedScoreInfo.payout != null ? fmt(selectedScoreInfo.payout) + ' 元' : '—' }}</b></span>
+              <span>EV（每2元） <b :class="selectedScoreInfo.ev > 0 ? 'pos' : 'neg'">{{ selectedScoreInfo.ev != null ? fmt(selectedScoreInfo.ev) : '—' }}</b></span>
+            </div>
+          </div>
+          <div v-if="play.key === 'bf' && selectedScoreInfo" class="bet-form">
+            <div class="bet-inputs">
+              <label class="bet-field">
+                <span>单注金额（元）</span>
+                <input v-model="betStake" type="number" min="2" step="2" inputmode="decimal" class="filter-input" />
+              </label>
+              <label class="bet-field">
+                <span>倍数</span>
+                <input v-model="betMultiple" type="number" min="1" step="1" inputmode="numeric" class="filter-input" />
+              </label>
+              <div class="bet-total">预计派奖 <b>{{ betPayoutPreview }} 元</b></div>
+            </div>
+            <button class="btn btn-primary bet-submit" :disabled="betSubmitting || !canAddBet" @click="addToBet">
+              {{ betSubmitting ? '提交中...' : (canWrite ? '加入模拟投注单' : '只读（仅管理角色可创建）') }}
+            </button>
+            <p v-if="betError" class="bet-error">{{ betError }}</p>
+            <p v-if="betSuccess" class="bet-success">{{ betSuccess }}</p>
+            <p class="bet-note">模拟数据，仅作学习与研究，不构成投注建议，不接入真实资金</p>
+          </div>
         </div>
         <div class="prize-section" v-if="bfTopValue.length">
           <div class="prize-title">比分 Top 价值选项</div>
           <div class="top-value-list">
-            <div class="top-value-item" v-for="t in bfTopValue" :key="t.score">
+            <div class="top-value-item" v-for="t in bfTopValue" :key="t.score" :class="{ selected: selectedBfScore === bfKeyOf(t.score) }" @click="selectBfScore(bfKeyOf(t.score))">
               <span class="score">{{ t.score.replace(':', ':') }}</span>
               <span>SP {{ fmt(t.sp) }}</span>
               <span>概率 {{ pct(t.prob) }}</span>
@@ -517,14 +648,52 @@
         </table>
       </div>
     </div>
+
+    <!-- 串关落单浮动面板 -->
+    <div v-if="parlayCart.length" class="parlay-float">
+      <div class="parlay-float-head">
+        <span>串关单（{{ parlayCart.length }} 腿，{{ parlayCart.length }}串1）</span>
+        <button class="btn btn-xs btn-ghost" @click="parlayCart = []">清空</button>
+      </div>
+      <div class="parlay-float-body">
+        <div v-for="(p, i) in parlayCart" :key="i" class="parlay-leg">
+          <span class="parlay-leg-name">{{ p.label }}</span>
+          <span class="parlay-leg-meta">SP {{ fmt(p.sp) }}</span>
+          <button class="btn btn-xs btn-ghost" @click="removeParlay(i)">×</button>
+        </div>
+      </div>
+      <div class="parlay-float-foot">
+        <label class="bet-field">
+          <span>倍数</span>
+          <input v-model="parlayMultiple" type="number" min="1" step="1" inputmode="numeric" class="filter-input" />
+        </label>
+        <div class="parlay-float-info">
+          <span>预计派奖 <b>{{ parlayPayoutPreview }} 元</b></span>
+          <span class="muted">2 元/注 × {{ parlayMultiple || 1 }} 倍</span>
+        </div>
+        <button
+          class="btn btn-primary parlay-submit"
+          :disabled="parlaySubmitting || parlayCart.length < 2 || !canWrite"
+          @click="submitParlay"
+        >{{ parlaySubmitting ? '提交中...' : '提交串关' }}</button>
+      </div>
+      <p v-if="parlayError" class="bet-error">{{ parlayError }}</p>
+      <p v-if="parlaySuccess" class="bet-success">{{ parlaySuccess }}</p>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import echarts from '@/utils/echarts'
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { CHART_COLORS, CHART_TOOLTIP, axisLabelStyle } from '@/utils/chartTheme'
-import { matchApi, leagueApi, predictionApi } from '@/api'
+import { useEChart } from '@/composables/useEChart'
+import { matchApi, leagueApi, predictionApi, simulationBetApi } from '@/api'
+import { useUserStore } from '@/stores/user'
+import { hasAnyPermission } from '@/utils/permissions'
+
+const userStore = useUserStore()
+const router = useRouter()
 
 const weatherOptions = ['晴', '多云', '阴', '小雨', '大雨', '雪']
 const pitchOptions = ['优秀', '良好', '一般', '较差']
@@ -617,6 +786,11 @@ const adv = reactive({
   wElo: null, wPoisson: null, wXg: null, wMc: null,
   homeAdvantage: null, leagueAvgGoals: null, weather: '', pitch: '',
   simulations: 10000, seed: null, spMode: 'auto', handicap: null,
+  manualSpfWin: null, manualSpfDraw: null, manualSpfLose: null,
+  manualNspfWin: null, manualNspfDraw: null, manualNspfLose: null,
+  manualTg0: null, manualTg1: null, manualTg2: null, manualTg3: null,
+  manualTg4: null, manualTg5: null, manualTg6: null, manualTg7Plus: null,
+  manualBfText: '',
 })
 
 function resetAdvanced() {
@@ -625,6 +799,11 @@ function resetAdvanced() {
     wElo: null, wPoisson: null, wXg: null, wMc: null,
     homeAdvantage: null, leagueAvgGoals: null, weather: '', pitch: '',
     simulations: 10000, seed: null, spMode: 'auto', handicap: null,
+    manualSpfWin: null, manualSpfDraw: null, manualSpfLose: null,
+    manualNspfWin: null, manualNspfDraw: null, manualNspfLose: null,
+    manualTg0: null, manualTg1: null, manualTg2: null, manualTg3: null,
+    manualTg4: null, manualTg5: null, manualTg6: null, manualTg7Plus: null,
+    manualBfText: '',
   })
 }
 
@@ -646,7 +825,64 @@ function buildOverrides() {
   if (adv.pitch) o.pitch_condition = adv.pitch
   if (adv.spMode && adv.spMode !== 'auto') o.sp_mode = adv.spMode
   if (adv.handicap != null && adv.handicap !== '') o.handicap = adv.handicap
+  const manualSp = {}
+  const spfManual = {
+    win: numOrNull(adv.manualSpfWin),
+    draw: numOrNull(adv.manualSpfDraw),
+    lose: numOrNull(adv.manualSpfLose),
+  }
+  const nspfManual = {
+    win: numOrNull(adv.manualNspfWin),
+    draw: numOrNull(adv.manualNspfDraw),
+    lose: numOrNull(adv.manualNspfLose),
+  }
+  for (const [k, v] of Object.entries(spfManual)) {
+    if (v != null) {
+      if (!manualSp.spf) manualSp.spf = {}
+      manualSp.spf[k] = v
+    }
+  }
+  for (const [k, v] of Object.entries(nspfManual)) {
+    if (v != null) {
+      if (!manualSp.nspf) manualSp.nspf = {}
+      manualSp.nspf[k] = v
+    }
+  }
+  const tgManual = {
+    '0': numOrNull(adv.manualTg0),
+    '1': numOrNull(adv.manualTg1),
+    '2': numOrNull(adv.manualTg2),
+    '3': numOrNull(adv.manualTg3),
+    '4': numOrNull(adv.manualTg4),
+    '5': numOrNull(adv.manualTg5),
+    '6': numOrNull(adv.manualTg6),
+    '7+': numOrNull(adv.manualTg7Plus),
+  }
+  for (const [k, v] of Object.entries(tgManual)) {
+    if (v != null) {
+      if (!manualSp.tg) manualSp.tg = {}
+      manualSp.tg[k] = v
+    }
+  }
+  const bfManual = parseBfManual(adv.manualBfText)
+  if (Object.keys(bfManual).length) manualSp.bf = bfManual
+  if (Object.keys(manualSp).length) o.manual_sp = manualSp
   return Object.keys(o).length ? o : null
+}
+
+// 解析比分手动 SP 文本："1:0=4.5,2:1=8.0,胜其它=15" -> { "1:0": 4.5, "2:1": 8.0, "胜其它": 15 }
+function parseBfManual(text) {
+  const out = {}
+  if (!text || typeof text !== 'string') return out
+  for (const seg of text.split(',')) {
+    const idx = seg.indexOf('=')
+    if (idx <= 0) continue
+    const k = seg.slice(0, idx).trim()
+    const v = Number(seg.slice(idx + 1).trim())
+    if (!k || !Number.isFinite(v) || v <= 0) continue
+    out[k] = v
+  }
+  return out
 }
 
 // ---------- 运行 ----------
@@ -704,6 +940,16 @@ const validationError = computed(() => {
   if (hc != null && (!Number.isInteger(hc) || hc < -10 || hc > 10)) {
     return '让球数须为 -10 ~ 10 的整数'
   }
+  const manualSpFields = [
+    ['manualSpfWin', '手动 SP 胜平负·胜'], ['manualSpfDraw', '手动 SP 胜平负·平'], ['manualSpfLose', '手动 SP 胜平负·负'],
+    ['manualNspfWin', '手动 SP 让球·胜'], ['manualNspfDraw', '手动 SP 让球·平'], ['manualNspfLose', '手动 SP 让球·负'],
+  ]
+  for (const [key, label] of manualSpFields) {
+    const v = numOrNull(adv[key])
+    if (v != null && (!Number.isFinite(v) || v <= 0 || v > 10000)) {
+      return `${label} 须大于 0 且不超过 10000`
+    }
+  }
   return ''
 })
 const tabs = [
@@ -732,6 +978,8 @@ async function runSimulation() {
     const overrides = buildOverrides()
     if (overrides) payload.overrides = overrides
     result.value = await predictionApi.simulate(payload)
+    selectedBfScore.value = ''
+    selectedHspfKey.value = ''
     activeTab.value = 'probs'
     await nextTick()
     renderCharts()
@@ -747,7 +995,7 @@ async function runSimulation() {
 const sensResult = ref(null)
 const sensRunning = ref(false)
 const sensChartRef = ref(null)
-let sensChart = null
+const { render: renderSens, resize: resizeSens } = useEChart(sensChartRef, () => buildSensOption())
 
 async function runSensitivity() {
   if (!selectedMatchId.value || validationError.value) return
@@ -776,12 +1024,11 @@ async function runSensitivity() {
   }
 }
 
-function renderSensChart() {
-  if (!sensChartRef.value || !sensResult.value) return
-  if (!sensChart) sensChart = echarts.init(sensChartRef.value)
+function buildSensOption() {
+  if (!sensResult.value) return null
   const s = sensResult.value.series
   const mk = (points, key) => points.map((p) => +(p[key] * 100).toFixed(2))
-  sensChart.setOption({
+  return {
     tooltip: { trigger: 'axis', ...CHART_TOOLTIP, valueFormatter: (v) => v + '%' },
     legend: {},
     grid: { left: 40, right: 20, top: 36, bottom: 60 },
@@ -806,7 +1053,11 @@ function renderSensChart() {
       { name: '平局(客λ)', type: 'line', xAxisIndex: 1, data: mk(s.lambda_away.points, 'draw_prob'), lineStyle: { type: 'dashed' }, itemStyle: { color: CHART_COLORS.textMuted } },
       { name: '客胜(客λ)', type: 'line', xAxisIndex: 1, data: mk(s.lambda_away.points, 'away_win_prob'), lineStyle: { type: 'dashed' }, itemStyle: { color: CHART_COLORS.orange } },
     ],
-  }, true)
+  }
+}
+
+function renderSensChart() {
+  renderSens()
 }
 
 // ---------- 参数历史回测 ----------
@@ -956,9 +1207,9 @@ function fmtLambda(v) {
 const probChartRef = ref(null)
 const heatChartRef = ref(null)
 const goalChartRef = ref(null)
-let probChart = null
-let heatChart = null
-let goalChart = null
+const { render: renderProb, resize: resizeProb } = useEChart(probChartRef, () => buildProbOption())
+const { chart: heatChart, render: renderHeat, resize: resizeHeat } = useEChart(heatChartRef, () => buildHeatOption())
+const { render: renderGoal, resize: resizeGoal } = useEChart(goalChartRef, () => buildGoalOption())
 
 function renderCharts() {
   renderProbChart()
@@ -966,9 +1217,8 @@ function renderCharts() {
   renderGoalChart()
 }
 
-function renderProbChart() {
-  if (!probChartRef.value || !result.value) return
-  if (!probChart) probChart = echarts.init(probChartRef.value)
+function buildProbOption() {
+  if (!result.value) return null
   const cats = ['主胜', '平局', '客胜']
   const keys = ['home_win_prob', 'draw_prob', 'away_win_prob']
   const series = [{
@@ -983,21 +1233,24 @@ function renderProbChart() {
       itemStyle: { color: CHART_COLORS.blue },
     })
   }
-  probChart.setOption({
+  return {
     tooltip: { trigger: 'axis', ...CHART_TOOLTIP, valueFormatter: (v) => v + '%' },
     legend: hasOverrides.value ? {} : { show: false },
     grid: { left: 40, right: 20, top: 30, bottom: 30 },
     xAxis: { type: 'category', data: cats, axisLabel: axisLabelStyle() },
     yAxis: { type: 'value', max: 100, axisLabel: { ...axisLabelStyle(), formatter: '{value}%' } },
     series,
-  }, true)
+  }
 }
 
-function renderHeatChart() {
-  if (!heatChartRef.value || !result.value) return
+function renderProbChart() {
+  renderProb()
+}
+
+function buildHeatOption() {
+  if (!result.value) return null
   const mc = result.value.simulated.mc
-  if (!mc || !mc.score_matrix) return
-  if (!heatChart) heatChart = echarts.init(heatChartRef.value)
+  if (!mc || !mc.score_matrix) return null
   const size = Math.min(6, mc.score_matrix_size)
   const data = []
   let maxP = 0
@@ -1008,7 +1261,7 @@ function renderHeatChart() {
       data.push([a, h, +(p * 100).toFixed(2)])
     }
   }
-  heatChart.setOption({
+  return {
     tooltip: {
       ...CHART_TOOLTIP,
       formatter: (p) => `主队 ${p.value[1]} : ${p.value[0]} 客队<br/>概率 ${p.value[2]}%`,
@@ -1023,16 +1276,27 @@ function renderHeatChart() {
       textStyle: { color: CHART_COLORS.textMuted },
     },
     series: [{ type: 'heatmap', data, label: { show: true, color: '#fff', fontSize: 10 } }],
-  }, true)
+  }
 }
 
-function renderGoalChart() {
-  if (!goalChartRef.value || !result.value) return
+function renderHeatChart() {
+  renderHeat()
+  // 点击热力图单元格选中比分（主队进球-客队进球 → 竞彩比分键 "h:a"）
+  if (heatChart.value) {
+    heatChart.value.off('click')
+    heatChart.value.on('click', (p) => {
+      if (!p.value || p.value.length < 2) return
+      selectBfScore(`${p.value[1]}:${p.value[0]}`)
+    })
+  }
+}
+
+function buildGoalOption() {
+  if (!result.value) return null
   const mc = result.value.simulated.mc
-  if (!mc || !mc.goal_distribution) return
-  if (!goalChart) goalChart = echarts.init(goalChartRef.value)
+  if (!mc || !mc.goal_distribution) return null
   const dist = mc.goal_distribution
-  goalChart.setOption({
+  return {
     tooltip: { trigger: 'axis', ...CHART_TOOLTIP, valueFormatter: (v) => v + '%' },
     grid: { left: 40, right: 20, top: 30, bottom: 30 },
     xAxis: {
@@ -1046,19 +1310,19 @@ function renderGoalChart() {
       data: dist.map((d) => +(d.prob * 100).toFixed(2)),
       itemStyle: { color: CHART_COLORS.green },
     }],
-  }, true)
+  }
 }
 
-function handleResize() {
-  probChart && probChart.resize()
-  heatChart && heatChart.resize()
-  goalChart && goalChart.resize()
-  sensChart && sensChart.resize()
+function renderGoalChart() {
+  renderGoal()
 }
 
 watch(activeTab, async () => {
   await nextTick()
-  handleResize()
+  resizeProb()
+  resizeHeat()
+  resizeGoal()
+  resizeSens()
 })
 
 // ---------- 派生数据 ----------
@@ -1080,10 +1344,16 @@ function deltaClass(v) {
 }
 
 const spSourceText = computed(() => {
-  const s = result.value?.prize?.sp_source || {}
+  const prize = result.value?.prize
+  const s = prize?.sp_source || {}
   const names = { real: '真实', snapshot: '快照', synthetic: '合成', manual: '手动' }
   return ['spf', 'nspf', 'bf', 'tg']
-    .map((k) => `${k.toUpperCase()}=${names[s[k]] || s[k] || '—'}`)
+    .map((k) => {
+      const src = names[s[k]] || s[k] || '—'
+      // 快照来源附带采集时间，便于核对数据时点（A1）
+      if (s[k] === 'snapshot' && prize?.snapshot_at) return `${k.toUpperCase()}=${src} ${prize.snapshot_at}`
+      return `${k.toUpperCase()}=${src}`
+    })
     .join(' · ')
 })
 
@@ -1092,8 +1362,11 @@ const marketRows = computed(() => {
   if (!prize) return []
   const rows = []
   const labels = { win: '主胜', draw: '平局', lose: '客胜' }
+  const srcName = { real: '真实', snapshot: '快照', synthetic: '合成', manual: '手动' }
   const spf = prize.spf || {}
+  const spfDetail = prize.sp_source_detail?.spf || {}
   for (const k of ['win', 'draw', 'lose']) {
+    const src = srcName[spfDetail[k]] || ''
     rows.push({
       key: 'spf-' + k,
       label: '胜平负 · ' + labels[k],
@@ -1102,10 +1375,14 @@ const marketRows = computed(() => {
       implied: spf.implied?.[k],
       ev: spf.ev?.[k],
       value: spf.value_flags?.[k],
+      source: src,
+      synthetic: src === '合成',
     })
   }
   const nspf = prize.nspf || {}
+  const nspfDetail = prize.sp_source_detail?.nspf || {}
   for (const k of ['win', 'draw', 'lose']) {
+    const src = srcName[nspfDetail[k]] || ''
     rows.push({
       key: 'nspf-' + k,
       label: `让球(${nspf.handicap >= 0 ? '+' : ''}${nspf.handicap ?? 0}) · ` + labels[k],
@@ -1114,10 +1391,14 @@ const marketRows = computed(() => {
       implied: nspf.implied?.[k],
       ev: nspf.ev?.[k],
       value: nspf.value_flags?.[k],
+      source: src,
+      synthetic: src === '合成',
     })
   }
   const tg = prize.tg || {}
+  const tgDetail = prize.sp_source_detail?.tg || {}
   for (const k of Object.keys(tg.probs || {})) {
+    const src = srcName[tgDetail[k]] || ''
     rows.push({
       key: 'tg-' + k,
       label: '总进球 ' + k,
@@ -1126,6 +1407,8 @@ const marketRows = computed(() => {
       implied: tg.implied?.[k],
       ev: tg.ev?.[k],
       value: tg.value_flags?.[k],
+      source: src,
+      synthetic: src === '合成',
     })
   }
   return rows
@@ -1146,24 +1429,30 @@ const componentRows = computed(() => {
 const prizePlays = computed(() => {
   const prize = result.value?.prize
   if (!prize) return []
-  const names = { real: '真实', snapshot: '快照', synthetic: '合成', manual: '手动' }
+  const names = { real: '真实', snapshot: '快照', synthetic: '合成', manual: '手动', mixed: '混合' }
   const labels = { win: '胜', draw: '平', lose: '负' }
+  const playLabels = { spf: '胜平负', nspf: '让球胜平负', bf: '比分（31 选项）', tg: '总进球', hspf: '半场胜平负' }
   const plays = []
-  for (const key of ['spf', 'nspf', 'tg']) {
+  for (const key of ['spf', 'nspf', 'bf', 'tg', 'hspf']) {
     const block = prize[key]
     if (!block) continue
+    const detail = prize.sp_source_detail?.[key] || {}
     const options = Object.keys(block.probs || {}).map((k) => ({
       key: k,
       label: key === 'tg' ? '总进球 ' + k : labels[k] || k,
       prob: block.probs[k],
       sp: block.sp?.[k],
+      implied: block.implied?.[k],
       payout: block.payout?.[k],
       ev: block.ev?.[k],
       value: block.value_flags?.[k],
+      // A2：选项级来源（部分选项合成时玩法级为 mixed，行内精确提示）
+      source: names[detail[k]] || detail[k] || '',
+      synthetic: (names[detail[k]] || detail[k]) === '合成',
     }))
     plays.push({
       key,
-      label: key === 'spf' ? '胜平负' : key === 'nspf' ? '让球胜平负' : '总进球',
+      label: playLabels[key] || key,
       source: names[prize.sp_source?.[key]] || prize.sp_source?.[key] || '—',
       handicap: key === 'nspf' ? block.handicap : null,
       options,
@@ -1172,21 +1461,261 @@ const prizePlays = computed(() => {
   return plays
 })
 
+// ---------- 选比分交互 ----------
+const selectedBfScore = ref('')
+
+function bfKeyOf(score) {
+  return (score || '').replace('-', ':')
+}
+
+function selectBfScore(key) {
+  selectedBfScore.value = selectedBfScore.value === key ? '' : key
+}
+
+function selectHspf(key) {
+  selectedHspfKey.value = selectedHspfKey.value === key ? '' : key
+}
+
+// ---------- 串关落单 cart ----------
+const parlayCart = ref([])
+const parlayMultiple = ref(1)
+const parlaySubmitting = ref(false)
+const parlayError = ref('')
+const parlaySuccess = ref('')
+
+// 玩法 → 选项显示名
+function playOptionLabel(playType, key) {
+  const labels = {
+    spf: { win: '主胜', draw: '平', lose: '客胜' },
+    nspf: { win: '让胜', draw: '让平', lose: '让负' },
+    hspf: { win: '半场主胜', draw: '半场平', lose: '半场客胜' },
+    tg: (k) => '总进球 ' + k,
+    bf: (k) => k,
+  }
+  const m = labels[playType]
+  return typeof m === 'function' ? m(key) : (m?.[key] || key)
+}
+// 串关可加入：有真实 SP（非合成/空）
+function canAddToParlay(playType, o) {
+  return o.sp != null && !o.synthetic
+}
+function inParlay(playType, o) {
+  if (!result.value?.meta?.match_id) return false
+  return parlayCart.value.some(
+    (p) => p.match_id === result.value.meta.match_id && p.play_type === playType && p.selection === o.key,
+  )
+}
+function addToParlay(playType, o) {
+  if (!result.value?.meta?.match_id) return
+  if (inParlay(playType, o)) {
+    removeParlay(
+      parlayCart.value.findIndex(
+        (p) => p.match_id === result.value.meta.match_id && p.play_type === playType && p.selection === o.key,
+      ),
+    )
+    return
+  }
+  if (parlayCart.value.length >= 8) {
+    parlayError.value = '串关最多支持 8 场赛事'
+    return
+  }
+  const home = result.value?.home?.name
+  const away = result.value?.away?.name
+  parlayCart.value.push({
+    match_id: result.value.meta.match_id,
+    match_no: result.value.match?.match_no,
+    match_name: home && away ? `${home} vs ${away}` : result.value.match?.match_no || result.value.meta.match_id,
+    play_type: playType,
+    selection: o.key,
+    label: `${playOptionLabel(playType, o.key)}（${home && away ? `${home} vs ${away}` : ''}）`,
+    sp: o.sp,
+    source: o.source && !o.synthetic ? (['snapshot', 'real', 'manual'].includes(o.source) ? o.source : 'real') : 'real',
+  })
+  parlayError.value = ''
+  parlaySuccess.value = ''
+}
+function removeParlay(i) {
+  if (i >= 0) parlayCart.value.splice(i, 1)
+}
+const parlayPayoutPreview = computed(() => {
+  if (!parlayCart.value.length) return '—'
+  const m = Number(parlayMultiple.value || 1)
+  let prod = 1
+  for (const p of parlayCart.value) prod *= p.sp
+  const v = Math.min(2 * prod * m, 500000)
+  return Number.isFinite(v) ? fmt(v) : '—'
+})
+async function submitParlay() {
+  parlayError.value = ''
+  parlaySuccess.value = ''
+  if (!userStore.isLoggedIn) {
+    router.push({ path: '/login', query: { redirect: '/simulation' } })
+    return
+  }
+  if (!hasAnyPermission('model:manage')) {
+    parlayError.value = '仅管理角色可创建模拟投注单，当前为只读权限'
+    return
+  }
+  if (parlayCart.value.length < 2) {
+    parlayError.value = '串关至少需要 2 场赛事'
+    return
+  }
+  const multiple = Number(parlayMultiple.value || 1)
+  if (!multiple || multiple < 1) {
+    parlayError.value = '倍数不能小于 1'
+    return
+  }
+  parlaySubmitting.value = true
+  try {
+    const res = await simulationBetApi.createParlay({
+      legs: parlayCart.value.map((p) => ({
+        match_id: p.match_id,
+        play_type: p.play_type,
+        selection: p.selection,
+        sp: p.sp,
+        sp_source: p.source,
+      })),
+      stake: 2,
+      multiple,
+    })
+    parlaySuccess.value = `串关已提交（组合 ${res.combination_id}，${res.legs.length} 腿），可在“我的模拟投注”查看`
+    parlayCart.value = []
+  } catch (e) {
+    parlayError.value = e?.message || '串关提交失败，请重试'
+  } finally {
+    parlaySubmitting.value = false
+  }
+}
+
+const selectedScoreInfo = computed(() => {
+  const k = selectedBfScore.value
+  const bf = result.value?.prize?.bf
+  if (!k || !bf) return null
+  if (bf.sp?.[k] == null && bf.probs?.[k] == null) return null
+  return {
+    key: k,
+    prob: bf.probs?.[k] ?? null,
+    sp: bf.sp?.[k] ?? null,
+    payout: bf.payout?.[k] ?? null,
+    ev: bf.ev?.[k] ?? null,
+    // A2：该选项的真实来源，用于加入投注单时归一化（synthetic 不允许加入）
+    source: result.value?.prize?.sp_source_detail?.bf?.[k] || result.value?.prize?.sp_source?.bf || 'synthetic',
+  }
+})
+
 const bfTopValue = computed(() => result.value?.prize?.bf?.top_value || [])
+
+// ---------- 半场胜平负三选一交互 ----------
+const selectedHspfKey = ref('')
+const selectedHspfInfo = computed(() => {
+  const k = selectedHspfKey.value
+  const hspf = result.value?.prize?.hspf
+  if (!k || !hspf) return null
+  if (hspf.sp?.[k] == null && hspf.probs?.[k] == null) return null
+  return {
+    key: k,
+    prob: hspf.probs?.[k] ?? null,
+    sp: hspf.sp?.[k] ?? null,
+    payout: hspf.payout?.[k] ?? null,
+    ev: hspf.ev?.[k] ?? null,
+    source: result.value?.prize?.sp_source_detail?.hspf?.[k] || result.value?.prize?.sp_source?.hspf || 'synthetic',
+  }
+})
+
+// ---------- 加入模拟投注单 ----------
+const betStake = ref(2)
+const betMultiple = ref(1)
+const betSubmitting = ref(false)
+const betError = ref('')
+const betSuccess = ref('')
+
+const canWrite = hasAnyPermission('model:manage')
+
+const canAddBet = computed(() =>
+  (!!selectedBfScore.value && !!selectedScoreInfo.value || !!selectedHspfKey.value && !!selectedHspfInfo.value) &&
+  !!result.value?.meta?.match_id && canWrite
+)
+
+const betPayoutPreview = computed(() => {
+  const info = selectedScoreInfo.value || selectedHspfInfo.value
+  if (!info || info.payout == null) return '—'
+  const v = info.payout * Number(betMultiple.value || 1)
+  return Number.isFinite(v) ? fmt(v) : '—'
+})
+
+async function addToBet() {
+  betError.value = ''
+  betSuccess.value = ''
+  if (!userStore.isLoggedIn) {
+    router.push({ path: '/login', query: { redirect: '/simulation' } })
+    return
+  }
+  if (!hasAnyPermission('model:manage')) {
+    betError.value = '仅管理角色可创建模拟投注单，当前为只读权限'
+    return
+  }
+  // 三选一玩法（spf/nspf/hspf）或比分（bf）
+  let playType = null
+  let selection = null
+  let info = null
+  if (selectedHspfKey.value && selectedHspfInfo.value) {
+    playType = 'hspf'
+    selection = selectedHspfKey.value
+    info = selectedHspfInfo.value
+  } else if (selectedBfScore.value && selectedScoreInfo.value) {
+    playType = 'bf'
+    selection = selectedBfScore.value
+    info = selectedScoreInfo.value
+  }
+  if (!playType || !selection || !info) {
+    betError.value = '请先选择一个投注选项'
+    return
+  }
+  if (info.sp == null) {
+    betError.value = '该选项暂无真实 SP，无法加入模拟投注单'
+    return
+  }
+  if (info.source === 'synthetic') {
+    betError.value = '该选项为合成参考值（非真实 SP），无法加入模拟投注单'
+    return
+  }
+  const stake = Number(betStake.value)
+  const multiple = Number(betMultiple.value)
+  if (!stake || stake < 2) {
+    betError.value = '单注金额不能小于 2 元'
+    return
+  }
+  if (!multiple || multiple < 1) {
+    betError.value = '倍数不能小于 1'
+    return
+  }
+  betSubmitting.value = true
+  try {
+    const res = await simulationBetApi.create({
+      match_id: result.value.meta.match_id,
+      play_type: playType,
+      selection,
+      sp: info.sp,
+      // 用选项级来源（normalize 到后端允许的 4 类；synthetic 已被上方拦截）
+      sp_source: ['snapshot', 'real', 'manual'].includes(info.source) ? info.source : 'real',
+      stake,
+      multiple,
+    })
+    betSuccess.value = `已加入模拟投注单 #${res.id}，可在“我的模拟投注”查看`
+    selectedBfScore.value = ''
+    selectedHspfKey.value = ''
+  } catch (e) {
+    betError.value = e?.message || '加入失败，请重试'
+  } finally {
+    betSubmitting.value = false
+  }
+}
 
 // ---------- 生命周期 ----------
 onMounted(() => {
   loadLeagues()
   loadMatches(1)
   loadHistory()
-  window.addEventListener('resize', handleResize)
-})
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  probChart && probChart.dispose()
-  heatChart && heatChart.dispose()
-  goalChart && goalChart.dispose()
-  sensChart && sensChart.dispose()
 })
 </script>
 
@@ -1266,6 +1795,8 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-color, #232b3b);
   color: var(--text-primary, #e5e9f0); border-radius: 6px; padding: 5px 8px; font-size: 12px;
 }
+.adv-group .adv-full { flex-direction: column; align-items: stretch; gap: 4px; }
+.adv-group .adv-full input { width: 100%; }
 .adv-actions { grid-column: 1 / -1; }
 
 .run-bar { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
@@ -1327,8 +1858,21 @@ onBeforeUnmount(() => {
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   background: var(--input-bg, #0f1420); border-radius: 8px; padding: 8px 14px;
 }
+.top-score-item.clickable { cursor: pointer; border: 1px solid transparent; }
+.top-score-item.clickable:hover { border-color: var(--border-color, #232b3b); }
+.top-score-item.selected { border-color: var(--primary, #3b82f6); background: rgba(59, 130, 246, 0.12); }
 .top-score-item .score { font-size: 16px; font-weight: 700; color: var(--text-primary, #e5e9f0); }
 .top-score-item .score-prob { font-size: 12px; color: var(--text-muted, #8b93a7); }
+
+.score-select-hint { margin-top: 10px; font-size: 12px; color: var(--text-muted, #8b93a7); }
+.selected-score-panel {
+  margin-top: 12px; padding: 12px 14px;
+  background: var(--input-bg, #0f1420);
+  border: 1px solid var(--primary, #3b82f6); border-radius: 8px;
+}
+.selected-score-panel .panel-title { font-size: 14px; font-weight: 600; color: var(--text-primary, #e5e9f0); margin-bottom: 8px; }
+.selected-score-panel .panel-stats { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; color: var(--text-secondary, #b6bdd0); }
+.selected-score-panel .panel-stats b { color: var(--text-primary, #e5e9f0); margin-left: 4px; }
 
 .market-stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .stat-chip {
@@ -1343,6 +1887,37 @@ onBeforeUnmount(() => {
 .data-table td { color: var(--text-secondary, #b6bdd0); }
 .data-table.compact td, .data-table.compact th { padding: 6px 10px; }
 .value-row { background: rgba(52, 211, 153, 0.06); }
+/* bf 31 选项完整表格：可点击行 + 横向滚动 + 冻结首列 */
+.bf-table { display: block; overflow-x: auto; }
+.bf-table thead th:first-child,
+.bf-table tbody td:first-child { position: sticky; left: 0; background: var(--card-bg, #121826); z-index: 1; }
+.bf-table thead th:first-child { z-index: 2; }
+.bf-row { cursor: pointer; }
+.bf-row:hover td { background: rgba(56, 189, 248, 0.06); }
+.bf-row.selected td { background: rgba(56, 189, 248, 0.14); }
+.bf-row.selected td:first-child { font-weight: 700; color: var(--text-primary, #e5e9f0); }
+.bf-check { color: #38bdf8; font-weight: 700; }
+.bf-hint { font-size: 12px; color: var(--text-muted, #8b93a7); margin: 6px 0 0; }
+.bf-selected-summary { margin-top: 10px; }
+.sel-grid { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--text-secondary, #b6bdd0); }
+.sel-grid b { color: var(--text-primary, #e5e9f0); margin-left: 4px; }
+/* 加入模拟投注单表单 */
+.bet-form {
+  margin-top: 14px; padding: 14px;
+  border: 1px dashed var(--border-color, #232b3b);
+  border-radius: 10px;
+  background: rgba(56, 189, 248, 0.04);
+}
+.bet-inputs { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: flex-end; }
+.bet-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-muted, #8b93a7); }
+.bet-field .filter-input { width: 110px; }
+.bet-total { font-size: 13px; color: var(--text-secondary, #b6bdd0); padding-bottom: 6px; }
+.bet-total b { color: #34d399; margin-left: 4px; }
+.bet-submit { margin-top: 12px; }
+.bet-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.bet-error { margin-top: 8px; font-size: 13px; color: #ef4444; }
+.bet-success { margin-top: 8px; font-size: 13px; color: #34d399; }
+.bet-note { margin-top: 8px; font-size: 12px; color: var(--text-muted, #8b93a7); }
 .disclaimer { margin-top: 12px; font-size: 12px; color: var(--text-muted, #8b93a7); }
 .backtest-row { align-items: center; }
 .bt-label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted, #8b93a7); }
@@ -1375,6 +1950,17 @@ onBeforeUnmount(() => {
 .weights-row { display: flex; gap: 24px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted, #8b93a7); }
 
 .prize-section { margin-bottom: 20px; }
+.synthetic-banner {
+  background: rgba(255, 193, 7, 0.12); border: 1px solid rgba(255, 193, 7, 0.45);
+  color: #f5c542; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px;
+  font-size: 12px; line-height: 1.5;
+}
+.mixed-banner { background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.45); color: #93c5fd; }
+.option-synthetic-tag {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(255, 193, 7, 0.15); border: 1px solid rgba(255, 193, 7, 0.45);
+  color: #f5c542; font-size: 11px; line-height: 1.4; vertical-align: middle; white-space: nowrap;
+}
 .prize-title { font-size: 14px; font-weight: 600; color: var(--text-primary, #e5e9f0); margin-bottom: 8px; }
 .prize-src { font-size: 12px; font-weight: 400; color: var(--text-muted, #8b93a7); margin-left: 10px; }
 .top-value-list { display: flex; flex-direction: column; gap: 6px; }

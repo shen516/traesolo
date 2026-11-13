@@ -8,6 +8,7 @@ from .leagues import router as leagues_router
 from .teams import router as teams_router
 from .matches import router as matches_router
 from .predictions import router as predictions_router
+from .simulation_bets import router as simulation_bets_router
 from .users import router as users_router
 from .favorites import router as favorites_router
 from .history import router as history_router
@@ -22,12 +23,14 @@ from .permissions import router as permissions_router
 from .subscription import router as subscription_router
 from .follows import router as follows_router
 from .health import router as health_router
+from .jingcai_trade import router as jingcai_trade_router
 
 router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 router.include_router(leagues_router, prefix="/leagues", tags=["Leagues"])
 router.include_router(teams_router, prefix="/teams", tags=["Teams"])
 router.include_router(matches_router, prefix="/matches", tags=["Matches"])
 router.include_router(predictions_router, prefix="/predictions", tags=["Predictions"])
+router.include_router(simulation_bets_router, prefix="/simulation", tags=["Simulation"])
 router.include_router(users_router, prefix="/users", tags=["Users"])
 router.include_router(favorites_router, prefix="/favorites", tags=["Favorites"])
 router.include_router(history_router, prefix="/history", tags=["History"])
@@ -42,3 +45,4 @@ router.include_router(permissions_router, prefix="/permissions", tags=["Permissi
 router.include_router(subscription_router, prefix="/subscription", tags=["Subscription"])
 router.include_router(follows_router, prefix="/follows", tags=["Follows"])
 router.include_router(health_router, tags=["Health"])
+router.include_router(jingcai_trade_router, prefix="/jingcai/trade", tags=["JingcaiTrade"])

@@ -228,6 +228,8 @@ const loading = ref(false)
 const errorMsg = ref('')
 const availableDates = ref([])
 const historyLimited = ref(false)
+// 请求序号守卫：快速翻页/切筛选时防止旧响应覆盖新数据
+let loadSeq = 0
 
 function setCardDensity(mode) {
   if (cardDensity.value === mode) return
@@ -316,10 +318,12 @@ function resolveLeague(match) {
 }
 
 async function loadData() {
+  const seq = ++loadSeq
   loading.value = true
   errorMsg.value = ''
   try {
     await followsStore.ensureLoaded()
+    if (seq !== loadSeq) return
     if (skipFollowedQuery.value) {
       matches.value = []
       applyPagination({ pagination: { total: 0, pages: 0 } }, 0)
@@ -340,6 +344,7 @@ async function loadData() {
           }),
       getActiveLeagues(),
     ])
+    if (seq !== loadSeq) return
 
     const rawMatches = unwrapList(matchesRes, 'matches')
     matches.value = rawMatches.map(isFinished ? adaptFinishedMatch : adaptUpcomingMatch)
@@ -355,7 +360,7 @@ async function loadData() {
         selectedDate.value = 'all'
         currentPage.value = 1
         loading.value = false
-        await loadData()
+        loadData()
         return
       }
     }
@@ -363,18 +368,20 @@ async function loadData() {
     leagues.value = leagueList
     teamMap.value = teamMapFromMatches(matches.value)
   } catch (err) {
+    if (seq !== loadSeq) return
     if (err?.code === 'FEATURE_LOCKED') {
       historyLimited.value = true
       selectedDate.value = 'all'
       currentPage.value = 1
       errorMsg.value = ''
+      matches.value = []
+      applyPagination({ pagination: { total: 0, pages: 0 } }, 0)
       loading.value = false
-      await loadData()
       return
     }
     errorMsg.value = err?.message || '加载数据失败，请检查后端服务'
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -8,9 +9,11 @@ import '../../core/providers.dart';
 import '../../core/theme.dart';
 import '../../data/models/match.dart';
 import '../../widgets/prediction_panel.dart';
+import '../../widgets/skeleton.dart';
 import '../../widgets/team_logo.dart';
 import '../auth/auth_state.dart';
 import '../common/async_state_pane.dart';
+import 'bet_builder_panel.dart';
 import 'odds_snapshots_panel.dart';
 import 'simulation_panel.dart';
 
@@ -22,6 +25,7 @@ class MatchDetailData {
     this.fromCache = false,
     this.cachedAt,
     this.cacheStale = false,
+    this.predictionError,
   });
 
   final MatchItem match;
@@ -29,6 +33,7 @@ class MatchDetailData {
   final bool fromCache;
   final DateTime? cachedAt;
   final bool cacheStale;
+  final String? predictionError;
 }
 
 final matchDetailProvider =
@@ -40,13 +45,22 @@ final matchDetailProvider =
     try {
       final match = await repo.detail(matchId);
       PredictionSummary? prediction = match.prediction;
+      String? predError;
       try {
         prediction = await repo.prediction(matchId);
-      } catch (_) {
-        // 无预测权限或尚未产出时，保留详情里已有摘要
+      } catch (e) {
+        if (e is ApiException && e.isForbidden) {
+          predError = '无预测查看权限';
+        } else {
+          predError = '预测加载失败，请稍后重试';
+        }
       }
       await cache.write(match: match, prediction: prediction);
-      return MatchDetailData(match: match, prediction: prediction);
+      return MatchDetailData(
+        match: match,
+        prediction: prediction,
+        predictionError: predError,
+      );
     } catch (e) {
       final cached = await cache.read(matchId);
       if (cached != null && cached.match.id.isNotEmpty) {
@@ -64,14 +78,21 @@ final matchDetailProvider =
   },
 );
 
-final matchFavoriteProvider =
-    FutureProvider.autoDispose.family<bool, String>((ref, matchId) async {
+// 收藏 ID 集合全局共享一份：多个详情页复用同一次请求（DETAIL-02）
+final favoriteMatchIdsProvider =
+    FutureProvider.autoDispose<Set<String>>((ref) async {
   final auth = ref.watch(authProvider);
   final userId = auth.user?.id;
-  if (userId == null) return false;
+  if (userId == null) return const <String>{};
   final ids = await ref.watch(favoriteRepositoryProvider).matchIds(
         userId is int ? userId : int.parse(userId.toString()),
       );
+  return ids.toSet();
+});
+
+final matchFavoriteProvider =
+    FutureProvider.autoDispose.family<bool, String>((ref, matchId) async {
+  final ids = await ref.watch(favoriteMatchIdsProvider.future);
   return ids.contains(matchId);
 });
 
@@ -105,8 +126,12 @@ class MatchDetailScreen extends ConsumerWidget {
           ),
         ],
       ),
+      bottomNavigationBar: ParlayCartBar(
+        repository: ref.watch(simulationRepositoryProvider),
+        currentMatchId: matchId,
+      ),
       body: async.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const SkeletonList(count: 4, cardHeight: 140),
         error: (e, _) => AsyncStatePane.error(
           error: e,
           onRetry: () => ref.invalidate(matchDetailProvider(matchId)),
@@ -215,6 +240,32 @@ class MatchDetailScreen extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 12),
+              if (data.predictionError != null && p == null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.bgCard,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.textMuted, width: 0.5),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 16, color: AppColors.textMuted),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            data.predictionError!,
+                            style: TextStyle(
+                                color: AppColors.textMuted, fontSize: 13),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               PredictionPanel(prediction: p),
               const SizedBox(height: 12),
               OddsSnapshotsPanel(matchId: matchId, prediction: p),
@@ -244,7 +295,10 @@ class MatchDetailScreen extends ConsumerWidget {
             matchId,
             currentlyFavorite: currentlyFavorite,
           );
-      ref.invalidate(matchFavoriteProvider(matchId));
+      // 只失效共享集合，所有详情页收藏态同步刷新（DETAIL-02）
+      ref.invalidate(favoriteMatchIdsProvider);
+      // 收藏操作轻触反馈（A11Y-04）
+      await HapticFeedback.lightImpact();
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(currentlyFavorite ? '已取消收藏' : '已收藏赛事')),

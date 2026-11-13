@@ -2,37 +2,11 @@
 
 import { pickOddsFields, adaptOddsAnalysis } from '@/utils/matchMeta'
 
-export function formatDate(d) {
-  if (!d) return ''
-  if (typeof d === 'string') return d.slice(0, 10)
-  try {
-    const dt = new Date(d)
-    if (isNaN(dt.getTime())) return ''
-    const y = dt.getFullYear()
-    const m = String(dt.getMonth() + 1).padStart(2, '0')
-    const day = String(dt.getDate()).padStart(2, '0')
-    return `${y}-${m}-${day}`
-  } catch {
-    return ''
-  }
-}
+// 日期/时间格式化统一收敛到 utils/formatters.js：
+// import 供本模块内部使用，re-export 保持既有 import 路径兼容
+import { formatDate, formatTime, formatDateTime } from './formatters'
 
-export function formatTime(t) {
-  if (!t) return ''
-  return String(t).slice(0, 5)
-}
-
-export function formatDateTime(dt) {
-  if (!dt) return ''
-  const date = new Date(dt)
-  if (isNaN(date.getTime())) return ''
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const h = String(date.getHours()).padStart(2, '0')
-  const min = String(date.getMinutes()).padStart(2, '0')
-  return `${y}-${m}-${day} ${h}:${min}`
-}
+export { formatDate, formatTime, formatDateTime }
 
 export function adaptTeam(t) {
   if (!t) return { id: '', name: '未知', short: '未知', logo: '⚪', elo: 1500, league: '' }

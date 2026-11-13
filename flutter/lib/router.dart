@@ -6,6 +6,7 @@ import 'features/about/about_screen.dart';
 import 'features/auth/auth_state.dart';
 import 'features/auth/change_password_screen.dart';
 import 'features/auth/login_screen.dart';
+import 'features/bets/my_simulation_bets_screen.dart';
 import 'features/data/data_screen.dart';
 import 'features/home/home_screen.dart';
 import 'features/jingcai/jingcai_screen.dart';
@@ -66,6 +67,11 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootKey,
         builder: (context, state) => const AboutScreen(),
       ),
+      GoRoute(
+        path: '/bets',
+        parentNavigatorKey: _rootKey,
+        builder: (context, state) => const MySimulationBetsScreen(),
+      ),
       // 深链 huange://open/match/{id} → /match/:id
       GoRoute(
         path: '/match/:id',
@@ -94,16 +100,6 @@ final routerProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: '/matches',
                 builder: (context, state) => const MatchesScreen(),
-                routes: [
-                  GoRoute(
-                    path: ':id',
-                    parentNavigatorKey: _rootKey,
-                    builder: (context, state) {
-                      final id = state.pathParameters['id']!;
-                      return MatchDetailScreen(matchId: id);
-                    },
-                  ),
-                ],
               ),
             ],
           ),

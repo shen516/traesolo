@@ -305,10 +305,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import echarts from '@/utils/echarts'
 import { CHART_COLORS } from '@/utils/chartTheme'
+import { useEChart } from '@/composables/useEChart'
 import {
   matchApi,
   trendApi,
@@ -345,7 +346,6 @@ const standingsLeagueId = ref('EPL')
 const standingsTabs = ref([])
 const summaryBoards = ref([])
 const chartRef = ref(null)
-let chartInstance = null
 
 // ===== Tab / 关注视图状态 =====
 const route = useRoute()
@@ -720,20 +720,15 @@ async function loadData() {
     loading.value = false
   }
   await nextTick()
-  initChart()
+  renderTrendChart()
 }
 
-function initChart() {
-  if (!chartRef.value) return
-  if (!accuracyTrend.value.length) return
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
-  chartInstance = echarts.init(chartRef.value)
+// 准确率趋势图 option 工厂：无趋势数据时返回 null，render 自动跳过渲染
+function buildTrendChartOption() {
+  if (!accuracyTrend.value.length) return null
   const dates = accuracyTrend.value.map(item => item.date)
   const values = accuracyTrend.value.map(item => item.accuracy)
-  chartInstance.setOption({
+  return {
     backgroundColor: 'transparent',
     grid: { top: 30, right: 20, bottom: 30, left: 45 },
     tooltip: {
@@ -781,12 +776,11 @@ function initChart() {
         }
       }
     ]
-  })
+  }
 }
 
-function handleResize() {
-  chartInstance && chartInstance.resize()
-}
+// 图表实例生命周期（init/setOption/resize/dispose）统一交给 useEChart 管理
+const { render: renderTrendChart, resize: resizeTrendChart } = useEChart(chartRef, buildTrendChartOption)
 
 // 关注联赛变化：刷新总览并使「我的关注」缓存失效
 watch(
@@ -799,28 +793,19 @@ watch(
   }
 )
 
-// 切到「我的关注」tab 时懒加载（仅首次）；切回总览时重建图表
+// 切到「我的关注」tab 时懒加载（仅首次）；切回总览时重渲染图表（render 幂等，复用既有实例）
 watch(dashTab, async (tab) => {
   if (tab === 'followed' && !isAdmin.value) {
     loadFollowedView()
   } else if (tab === 'overview') {
     await nextTick()
-    initChart()
-    chartInstance && chartInstance.resize()
+    renderTrendChart()
+    resizeTrendChart()
   }
 })
 
 onMounted(() => {
   loadData()
-  window.addEventListener('resize', handleResize)
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  if (chartInstance) {
-    chartInstance.dispose()
-    chartInstance = null
-  }
 })
 </script>
 

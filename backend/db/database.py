@@ -119,6 +119,10 @@ def ensure_schema(force: bool = False):
 
     _add_columns("odds_snapshots", {
         "odds_bf_json": "TEXT NULL",
+        "odds_hspf_win": "DECIMAL(6,2) NULL",
+        "odds_hspf_draw": "DECIMAL(6,2) NULL",
+        "odds_hspf_lose": "DECIMAL(6,2) NULL",
+        "odds_hh_json": "TEXT NULL",
     })
     _add_columns("matches", {
         "fixture_id": "VARCHAR(30) NULL",
@@ -131,6 +135,10 @@ def ensure_schema(force: bool = False):
         "odds_spf_draw": "DECIMAL(6,2) NULL",
         "odds_spf_lose": "DECIMAL(6,2) NULL",
         "odds_bf_json": "TEXT NULL",
+        "odds_hspf_win": "DECIMAL(6,2) NULL",
+        "odds_hspf_draw": "DECIMAL(6,2) NULL",
+        "odds_hspf_lose": "DECIMAL(6,2) NULL",
+        "odds_hh_json": "TEXT NULL",
         "is_single": "BOOLEAN NULL DEFAULT 0",
         "buy_end_time": "VARCHAR(30) NULL",
         "half_score": "VARCHAR(10) NULL",
@@ -158,8 +166,14 @@ def ensure_schema(force: bool = False):
     _add_columns("users", {
         "must_change_password": "BOOLEAN NULL DEFAULT 0",
     })
+    # 串关组合：同 combination_id 多行共享；NULL = 单关（兼容既有行）
+    _add_columns("simulation_bets", {
+        "combination_id": "VARCHAR(40) NULL",
+        "is_parlay": "BOOLEAN NULL DEFAULT 0",
+    })
 
     _ensure_match_stage_enum(tables)
+    _ensure_simulation_bet_play_type_enum(tables)
     _backfill_league_parents_if_needed(tables)
     _ensure_performance_indexes(tables)
     _activate_priority_leagues(tables)
@@ -258,6 +272,7 @@ def _ensure_performance_indexes(tables: set):
         ("matches", "idx_matches_status_date_league", "status, match_date, league_id"),
         ("match_predictions", "idx_predictions_match_created", "match_id, created_at"),
         ("leagues", "idx_leagues_parent_id", "parent_id"),
+        ("simulation_bets", "idx_sim_bet_combination", "user_id, combination_id"),
     ]
     from sqlalchemy import inspect
 
@@ -335,6 +350,54 @@ def _ensure_match_stage_enum(tables: set):
         # 常见：Lock wait timeout — 采集占用 matches 时不硬等
         logger.warning(
             "Schema: matches.stage ENUM update deferred (will retry next boot): %s",
+            e,
+        )
+
+
+# simulation_bets.play_type 目标 ENUM（与 db.models.SimulationBet.play_type 一致）
+SIMULATION_BET_PLAY_TYPE_ENUM = (
+    "spf",
+    "nspf",
+    "bf",
+    "tg",
+    "hspf",
+)
+
+
+def _ensure_simulation_bet_play_type_enum(tables: set):
+    """仅当缺少 hspf 值时才 ALTER simulation_bets.play_type。"""
+    if "simulation_bets" not in tables or not _is_mysql():
+        return
+
+    needed = set(SIMULATION_BET_PLAY_TYPE_ENUM)
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() "
+                "AND TABLE_NAME = 'simulation_bets' AND COLUMN_NAME = 'play_type'"
+            )).fetchone()
+        current = _parse_mysql_enum_values(row[0] if row else "")
+        missing = needed - current
+        if not missing:
+            logger.debug("Schema: simulation_bets.play_type ENUM already up to date")
+            return
+
+        enum_sql = ",".join(f"'{v}'" for v in SIMULATION_BET_PLAY_TYPE_ENUM)
+        with engine.begin() as conn:
+            conn.execute(text("SET SESSION lock_wait_timeout = 5"))
+            conn.execute(text(
+                "ALTER TABLE simulation_bets MODIFY COLUMN play_type "
+                f"ENUM({enum_sql}) NOT NULL"
+            ))
+        logger.info(
+            "Schema: updated simulation_bets.play_type ENUM (added %s)",
+            ",".join(sorted(missing)),
+        )
+    except Exception as e:
+        logger.warning(
+            "Schema: simulation_bets.play_type ENUM update deferred "
+            "(will retry next boot): %s",
             e,
         )
 

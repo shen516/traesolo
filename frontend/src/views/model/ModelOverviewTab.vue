@@ -148,8 +148,8 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import echarts from '@/utils/echarts'
+import { ref, computed, watch, onMounted, onBeforeUnmount, onActivated, onDeactivated, nextTick } from 'vue'
+import { useEChart } from '@/composables/useEChart'
 import { CHART_COLORS, MODEL_COLORS } from '@/utils/chartTheme'
 import CollapsibleSection from '@/components/common/CollapsibleSection.vue'
 import {
@@ -163,7 +163,6 @@ import {
 // ---------- 权重卡片与图 ----------
 
 const weightChartRef = ref(null)
-let weightChart = null
 
 const modelWeights = ref([
   { name: '泊松模型', key: 'poisson', weight: 0.30, color: MODEL_COLORS.poisson, icon: '📊' },
@@ -180,10 +179,8 @@ function applyWeightsFromStatus(weights) {
   }))
 }
 
-function initWeightChart() {
-  if (!weightChartRef.value) return
-  if (!weightChart) weightChart = echarts.init(weightChartRef.value)
-  weightChart.setOption({
+function buildWeightChartOption() {
+  return {
     tooltip: { trigger: 'item', formatter: '{b}: {d}%' },
     legend: { bottom: 0, textStyle: { color: CHART_COLORS.textMuted, fontSize: 12 } },
     series: [
@@ -202,24 +199,32 @@ function initWeightChart() {
         }))
       }
     ]
-  })
+  }
 }
 
-function handleResize() {
-  weightChart?.resize()
-}
+// 图表实例生命周期（init/setOption/resize/dispose）统一交给 useEChart 管理，render 幂等复用实例
+const { render: renderWeightChart } = useEChart(weightChartRef, buildWeightChartOption)
 
 // ---------- 自动刷新 ----------
 
 const autoRefresh = ref(false)
 let refreshInterval = null
 
+function startAutoRefresh() {
+  stopAutoRefresh()
+  refreshInterval = setInterval(refresh, 15000)
+}
+
+function stopAutoRefresh() {
+  clearInterval(refreshInterval)
+  refreshInterval = null
+}
+
 watch(autoRefresh, (val) => {
   if (val) {
-    refreshInterval = setInterval(refresh, 15000)
+    startAutoRefresh()
   } else {
-    clearInterval(refreshInterval)
-    refreshInterval = null
+    stopAutoRefresh()
   }
 })
 
@@ -227,7 +232,7 @@ async function refresh() {
   await fetchOverviewData()
   applyWeightsFromStatus(modelStatus.value?.weights)
   await nextTick()
-  initWeightChart()
+  renderWeightChart()
 }
 
 // ---------- 概览统计卡 ----------
@@ -313,26 +318,24 @@ function getDataLabel(key) {
   return labels[key] || key
 }
 
-defineExpose({
-  /** 父页在 keep-alive 重入或 tab 切回时调用：补初始化图表 */
-  reinitCharts() {
-    nextTick(() => initWeightChart())
-  },
-})
-
 onMounted(async () => {
-  window.addEventListener('resize', handleResize)
   await fetchOverviewData()
   applyWeightsFromStatus(modelStatus.value?.weights)
   await nextTick()
-  initWeightChart()
+  renderWeightChart()
+})
+
+// KeepAlive 下 tab 切走不卸载：暂停自动刷新轮询，切回时按开关状态恢复
+onDeactivated(() => {
+  stopAutoRefresh()
+})
+
+onActivated(() => {
+  if (autoRefresh.value) startAutoRefresh()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', handleResize)
-  weightChart?.dispose()
-  weightChart = null
-  clearInterval(refreshInterval)
+  stopAutoRefresh()
 })
 </script>
 

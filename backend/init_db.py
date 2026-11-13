@@ -576,6 +576,7 @@ def _init_roles_permissions(db):
                 perm_map["match:jingcai_bf"],
                 perm_map["match:jingcai_live"],
                 perm_map["league:view"],
+                perm_map["simulation:view"],
                 perm_map["profile:view"]
             ]
         }

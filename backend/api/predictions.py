@@ -307,13 +307,26 @@ class SensitivityRequest(BaseModel):
     overrides: Optional[SimulationOverrides] = None
 
 
+class BatchSimLeg(BaseModel):
+    """批量模拟中的单场投注选项（全玩法，供串关落单分析）。"""
+
+    match_id: str
+    play_type: Literal["spf", "nspf", "bf", "tg", "hspf"]
+    selection: str
+
+
 class BatchSimulateRequest(BaseModel):
-    """批量模拟 + 串关奖金：2~8 场未来赛事。"""
+    """批量模拟 + 串关奖金：2~8 场未来赛事。
+
+    legs 可选：指定每场投注选项（全玩法），走单组串关落单分析；
+    不传则做 3^n 全展开（胜平负组合）分析。
+    """
     match_ids: List[str] = Field(..., min_length=2, max_length=8)
     simulations: int = Field(5000, ge=1000, le=20000)
     seed: Optional[int] = Field(None, ge=0, le=2**32 - 1)
     sp_mode: Literal["auto", "real", "synthetic"] = "auto"
     overround: float = Field(0.13, ge=0.05, le=0.30)
+    legs: Optional[List[BatchSimLeg]] = Field(None, min_length=2, max_length=8)
 
 
 def _check_weights_sum(req) -> None:

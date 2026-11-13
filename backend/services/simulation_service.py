@@ -449,9 +449,11 @@ def sensitivity_lambda(db: Session, request) -> Dict[str, Any]:
 
 
 def simulate_batch(db: Session, request) -> Dict[str, Any]:
-    """批量模拟多场赛事并计算串关奖金（2串1~8串1，胜平负）。"""
-    from services.parlay_calculator import calculate_parlay
+    """批量模拟多场赛事并计算串关奖金。
 
+    - 未传 legs：3^n 全展开（胜平负组合）分析，向后兼容。
+    - 传了 legs：按指定选项（全玩法）做单组串关落单分析（§12-7）。
+    """
     started = time.monotonic()
     match_ids = list(dict.fromkeys(request.match_ids))  # 去重保序
     results, errors = [], []
@@ -478,7 +480,11 @@ def simulate_batch(db: Session, request) -> Dict[str, Any]:
         })
 
     parlay = None
-    if len(legs) >= 2:
+    selected_legs = getattr(request, "legs", None)
+    if selected_legs:
+        parlay = _build_selected_parlay(results, selected_legs)
+    elif len(legs) >= 2:
+        from services.parlay_calculator import calculate_parlay
         parlay = calculate_parlay(legs)
 
     return {
@@ -494,6 +500,45 @@ def simulate_batch(db: Session, request) -> Dict[str, Any]:
             "seed": request.seed,
         },
     }
+
+
+def _build_selected_parlay(results: List[Dict[str, Any]], selected_legs) -> Optional[Dict[str, Any]]:
+    """按用户选定选项（全玩法）构造单组串关落单分析（§12-7）。
+
+    selected_legs: [{match_id, play_type, selection}]，须与 results 的 match_id 对应。
+    从每场 prize.<play_type> 块提取 sp/probs，交给 parlay_calculator.calculate_parlay_picks。
+    """
+    from services.parlay_calculator import calculate_parlay_picks
+
+    by_id = {r["match"]["id"]: r for r in results}
+    picks = []
+    for leg in selected_legs:
+        mid = leg.match_id if hasattr(leg, "match_id") else leg.get("match_id")
+        play_type = leg.play_type if hasattr(leg, "play_type") else leg.get("play_type")
+        selection = leg.selection if hasattr(leg, "selection") else leg.get("selection")
+        one = by_id.get(mid)
+        if not one:
+            continue
+        prize = one.get("prize") or {}
+        block = prize.get(play_type) or {}
+        sp_map = block.get("sp") or {}
+        prob_map = block.get("probs") or {}
+        if selection not in sp_map or selection not in prob_map:
+            continue
+        picks.append({
+            "match_id": mid,
+            "match_name": f'{one["match"]["home_team"]["name"]} vs {one["match"]["away_team"]["name"]}',
+            "play_type": play_type,
+            "option": selection,
+            "sp": sp_map[selection],
+            "prob": prob_map[selection],
+        })
+    if len(picks) < 2:
+        return None
+    try:
+        return calculate_parlay_picks(picks)
+    except ValueError:
+        return None
 
 
 class _SingleRequest:

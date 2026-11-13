@@ -204,10 +204,10 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { matchApi } from '@/api'
 import { getActiveLeagues } from '@/utils/catalogCache'
-import echarts from '@/utils/echarts'
+import { useEChart } from '@/composables/useEChart'
 import UpgradeHint from '@/components/UpgradeHint.vue'
 import { useUserStore } from '@/stores/user'
 import { useFollowsStore } from '@/stores/follows'
@@ -223,9 +223,6 @@ const emptyFollows = ref(false)
 const report = ref(null)
 const scoreChartRef = ref(null)
 const goalChartRef = ref(null)
-
-let scoreChart = null
-let goalChart = null
 
 const OUTCOMES = [
   { key: 'H', label: '主胜' },
@@ -324,13 +321,6 @@ function listParams() {
   return params
 }
 
-function disposeCharts() {
-  scoreChart?.dispose()
-  goalChart?.dispose()
-  scoreChart = null
-  goalChart = null
-}
-
 function axisStyle() {
   return {
     axisLine: { lineStyle: { color: '#2d4f7a' } },
@@ -339,45 +329,39 @@ function axisStyle() {
   }
 }
 
-function renderCharts() {
-  if (!hasScores.value || !scoreChartRef.value) {
-    scoreChart?.dispose()
-    scoreChart = null
-  } else {
-    const categories = []
-    const seen = new Set()
-    for (const period of [lastPeriod.value, thisPeriod.value]) {
-      for (const item of period?.score_freq || []) {
-        if (seen.has(item.score)) continue
-        seen.add(item.score)
-        categories.push(item.score)
-      }
+// 比分对照柱状图 option 工厂：两个月份都无已完赛比分时返回 null
+function buildScoreChartOption() {
+  if (!hasScores.value) return null
+  const categories = []
+  const seen = new Set()
+  for (const period of [lastPeriod.value, thisPeriod.value]) {
+    for (const item of period?.score_freq || []) {
+      if (seen.has(item.score)) continue
+      seen.add(item.score)
+      categories.push(item.score)
     }
-    const countOf = (period, score) => (period?.score_freq || []).find((item) => item.score === score)?.count || 0
-    if (!scoreChart) scoreChart = echarts.init(scoreChartRef.value)
-    scoreChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { trigger: 'axis' },
-      legend: { textStyle: { color: '#c5d2e6' }, top: 0 },
-      grid: { left: 36, right: 12, top: 36, bottom: 28 },
-      xAxis: { type: 'category', data: categories, ...axisStyle() },
-      yAxis: { type: 'value', minInterval: 1, ...axisStyle() },
-      series: [
-        { name: '上月', type: 'bar', data: categories.map((score) => countOf(lastPeriod.value, score)), itemStyle: { color: '#ffd700' } },
-        { name: '本月已出', type: 'bar', data: categories.map((score) => countOf(thisPeriod.value, score)), itemStyle: { color: '#4de0ff' } },
-      ],
-    })
   }
+  const countOf = (period, score) => (period?.score_freq || []).find((item) => item.score === score)?.count || 0
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis' },
+    legend: { textStyle: { color: '#c5d2e6' }, top: 0 },
+    grid: { left: 36, right: 12, top: 36, bottom: 28 },
+    xAxis: { type: 'category', data: categories, ...axisStyle() },
+    yAxis: { type: 'value', minInterval: 1, ...axisStyle() },
+    series: [
+      { name: '上月', type: 'bar', data: categories.map((score) => countOf(lastPeriod.value, score)), itemStyle: { color: '#ffd700' } },
+      { name: '本月已出', type: 'bar', data: categories.map((score) => countOf(thisPeriod.value, score)), itemStyle: { color: '#4de0ff' } },
+    ],
+  }
+}
 
-  if (!hasGoals.value || !goalChartRef.value) {
-    goalChart?.dispose()
-    goalChart = null
-    return
-  }
+// 总进球分布柱状图 option 工厂：两个月份都无进球样本时返回 null
+function buildGoalChartOption() {
+  if (!hasGoals.value) return null
   const labels = (lastPeriod.value?.goals?.distribution || thisPeriod.value?.goals?.distribution || []).map((item) => item.label)
   const dist = (period, label) => (period?.goals?.distribution || []).find((item) => item.label === label)?.count || 0
-  if (!goalChart) goalChart = echarts.init(goalChartRef.value)
-  goalChart.setOption({
+  return {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis' },
     legend: { textStyle: { color: '#c5d2e6' }, top: 0 },
@@ -388,12 +372,17 @@ function renderCharts() {
       { name: '上月', type: 'bar', data: labels.map((label) => dist(lastPeriod.value, label)), itemStyle: { color: '#ffd700' } },
       { name: '本月已出', type: 'bar', data: labels.map((label) => dist(thisPeriod.value, label)), itemStyle: { color: '#4de0ff' } },
     ],
-  })
+  }
 }
 
-function onResize() {
-  scoreChart?.resize()
-  goalChart?.resize()
+// 图表实例生命周期（init/setOption/resize/dispose）统一交给 useEChart 管理
+const { render: renderScoreChart } = useEChart(scoreChartRef, buildScoreChartOption)
+const { render: renderGoalChart } = useEChart(goalChartRef, buildGoalChartOption)
+
+// 图表容器是 v-show：隐藏时尺寸为 0，须等数据就绪（hasScores/hasGoals 为 true）且 DOM 更新后再 render，避免 0 尺寸实例
+function renderCharts() {
+  if (hasScores.value) renderScoreChart()
+  if (hasGoals.value) renderGoalChart()
 }
 
 async function loadData() {
@@ -426,18 +415,12 @@ async function onIncludeChildrenChange(e) {
 }
 
 onMounted(async () => {
-  window.addEventListener('resize', onResize)
   try {
     leagues.value = await getActiveLeagues()
   } catch {
     leagues.value = []
   }
   await loadData()
-})
-
-onBeforeUnmount(() => {
-  window.removeEventListener('resize', onResize)
-  disposeCharts()
 })
 </script>
 

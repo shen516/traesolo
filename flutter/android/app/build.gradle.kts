@@ -15,7 +15,8 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.traesolo.traesolo"
-    compileSdk = flutter.compileSdkVersion
+    // 显式锁定 SDK 版本，避免升级 Flutter 时漂移（Flutter 3.47.9 默认：compile 36 / min 24 / target 36）
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -25,8 +26,9 @@ android {
 
     defaultConfig {
         applicationId = "com.traesolo.traesolo"
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // 显式锁定（≥33 满足通知权限运行时申请），与 Flutter 默认一致
+        minSdk = 24
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

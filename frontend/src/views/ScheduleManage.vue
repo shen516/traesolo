@@ -345,6 +345,7 @@
 import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { scheduleApi } from '@/api'
+import { formatCompactDateTime, formatDateTimeSec } from '@/utils/formatters'
 import PageTabs from '@/components/common/PageTabs.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import StateBlock from '@/components/common/StateBlock.vue'
@@ -462,19 +463,11 @@ const runtimeLogCurrent = ref('')
 const runtimeLogFiles = ref([])
 const runtimeLogContent = ref('')
 
-function formatTime(dateStr) {
-  if (!dateStr) return '-'
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return '-'
-  return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
+// 日志文件时间：紧凑 M-D HH:MM
+const formatTime = (dateStr) => formatCompactDateTime(dateStr)
 
-function formatDateTime(dateStr) {
-  if (!dateStr) return '-'
-  const d = new Date(dateStr)
-  if (isNaN(d.getTime())) return String(dateStr)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
-}
+// 任务执行时间：YYYY-MM-DD HH:MM:SS，空值显示 '-'
+const formatDateTime = (dateStr) => formatDateTimeSec(dateStr, '-')
 
 function crawlCategoryText(c) {
   return {
@@ -607,6 +600,12 @@ async function enableTask(task) {
       await scheduleApi.enableLiveJingcai(30)
     } else if (task.id === 'injury_crawl') {
       await scheduleApi.enableInjuryCrawl(120)
+    } else if (task.id === 'jingcai_trade_all_crawl') {
+      await scheduleApi.enableJingcaiTrade(30)
+    } else if (task.id === 'jingcai_trade_poll') {
+      await scheduleApi.enableJingcaiTradePoll(5)
+    } else if (task.id === 'jingcai_trade_history') {
+      await scheduleApi.enableJingcaiTradeHistory(360)
     }
     await fetchStatus()
   } catch (e) {
@@ -657,6 +656,12 @@ async function disableTask(task) {
       await scheduleApi.disableLiveJingcai()
     } else if (task.id === 'injury_crawl') {
       await scheduleApi.disableInjuryCrawl()
+    } else if (task.id === 'jingcai_trade_all_crawl') {
+      await scheduleApi.disableJingcaiTrade()
+    } else if (task.id === 'jingcai_trade_poll') {
+      await scheduleApi.disableJingcaiTradePoll()
+    } else if (task.id === 'jingcai_trade_history') {
+      await scheduleApi.disableJingcaiTradeHistory()
     }
     await fetchStatus()
   } catch (e) {
@@ -711,6 +716,12 @@ async function runNow(task) {
       await scheduleApi.runLiveJingcaiNow()
     } else if (task.id === 'injury_crawl') {
       await scheduleApi.runInjuryCrawlNow()
+    } else if (task.id === 'jingcai_trade_all_crawl') {
+      await scheduleApi.runJingcaiTradeNow()
+    } else if (task.id === 'jingcai_trade_poll') {
+      await scheduleApi.runJingcaiTradePollNow()
+    } else if (task.id === 'jingcai_trade_history') {
+      await scheduleApi.runJingcaiTradeHistoryNow()
     }
     runNowStatus.value = 'success'
     await fetchLogStats()
@@ -775,6 +786,12 @@ async function confirmInterval() {
       await scheduleApi.enableLiveJingcai(intervalValue.value)
     } else if (currentTask.value.id === 'injury_crawl') {
       await scheduleApi.enableInjuryCrawl(intervalValue.value)
+    } else if (currentTask.value.id === 'jingcai_trade_all_crawl') {
+      await scheduleApi.enableJingcaiTrade(intervalValue.value)
+    } else if (currentTask.value.id === 'jingcai_trade_poll') {
+      await scheduleApi.enableJingcaiTradePoll(intervalValue.value)
+    } else if (currentTask.value.id === 'jingcai_trade_history') {
+      await scheduleApi.enableJingcaiTradeHistory(intervalValue.value)
     }
     intervalDialogVisible.value = false
     await fetchStatus()

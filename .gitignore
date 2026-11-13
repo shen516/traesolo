@@ -54,6 +54,10 @@ run_wc_player_crawl.py
 *.pem
 *.key
 
+# ===== 文档目录（本地保留，不入库） =====
+DOC/
+docs/
+
 # ===== 工具/IDE 目录 =====
 .trae/
 .cursor/
